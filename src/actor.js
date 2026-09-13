@@ -50,7 +50,7 @@ const crawler = new PlaywrightCrawler({
       const username = String(INPUT.username ?? 'Apify Collector').trim() || 'Apify Collector';
 
       const started = await page.evaluate((username) => {
-        const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
+        const clean = s => (s || '').replace(/\s+/g, ' ').trim();
         const visible = el => {
           if (!el) return false;
           const s = getComputedStyle(el);
@@ -60,7 +60,7 @@ const crawler = new PlaywrightCrawler({
 
         const text = clean(document.body.innerText).toLowerCase();
         const startButton = [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
-          .find(el => visible(el) && /start\\s+mcq\\s+test/i.test(clean(el.innerText || el.value)));
+          .find(el => visible(el) && /start\s+mcq\s+test/i.test(clean(el.innerText || el.value)));
 
         const nameInput = [...document.querySelectorAll(
           'input[type="text"], input:not([type]), input[name*="name" i], input[id*="name" i], input[placeholder*="name" i]'
@@ -161,7 +161,7 @@ const crawler = new PlaywrightCrawler({
 
       if (state.questionBlocks > 0 && (state.correct === 0 || state.solutions === 0)) {
         const clicked = await page.evaluate(() => {
-          const normalize = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+          const normalize = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
           const visible = el => {
             if (!el) return false;
             const s = getComputedStyle(el);
