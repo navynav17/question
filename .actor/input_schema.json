@@ -1,35 +1,34 @@
 {
   "title": "CEE MCQ extractor input",
+  "description": "Crawl all CEE chapter pages and extract questions, options, correct answers and explanations.",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
     "startUrls": {
-      "title": "Seed URLs",
+      "title": "Start URLs",
+      "description": "Pages where chapter links should be discovered.",
       "type": "array",
-      "description": "Pages from which chapter links will be discovered.",
       "editor": "requestListSources",
       "default": [
         { "url": "https://pandeyramu.com.np/" }
-      ],
-      "items": {
-        "type": "object",
-        "properties": {
-          "url": {
-            "title": "URL",
-            "type": "string",
-            "editor": "textfield"
-          }
-        },
-        "required": ["url"]
-      }
+      ]
     },
     "maxConcurrency": {
-      "title": "Max concurrency",
+      "title": "Max Concurrency",
+      "description": "Maximum number of pages processed concurrently.",
       "type": "integer",
       "default": 2,
       "minimum": 1,
       "maximum": 5
+    },
+    "maxRequests": {
+      "title": "Max Requests",
+      "description": "Maximum total pages visited in one run.",
+      "type": "integer",
+      "default": 500,
+      "minimum": 1,
+      "maximum": 5000
     }
   },
-  "required": ["startUrls"]
+  "required": []
 }
