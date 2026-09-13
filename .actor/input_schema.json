@@ -34,7 +34,7 @@
       "description": "Name entered on every MCQ start screen. Use the same username for all tests.",
       "type": "string",
       "editor": "textfield",
-      "default": "Apify Collector"
+      "default": "Abcdefgh"
     },
     "testMode": {
       "title": "Test mode",
