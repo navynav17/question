@@ -1,22 +1,26 @@
 {
-  "title": "CEE MCQ extractor input",
+  "title": "CEE MCQ all-chapters extractor",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
     "startUrls": {
-      "title": "Seed URLs",
+      "title": "Discovery URLs",
       "type": "array",
-      "description": "Pages from the site from which chapter links will be discovered.",
+      "description": "Subject/index pages used to discover all /chapter/<slug>/ pages.",
       "editor": "requestListSources",
       "default": [
-        {
-          "url": "https://pandeyramu.com.np/"
-        }
+        { "url": "https://pandeyramu.com.np/all-subjects/" },
+        { "url": "https://pandeyramu.com.np/subject/physics/" },
+        { "url": "https://pandeyramu.com.np/subject/chemistry/" },
+        { "url": "https://pandeyramu.com.np/subject/botany/" },
+        { "url": "https://pandeyramu.com.np/subject/zoology/" },
+        { "url": "https://pandeyramu.com.np/subject/mat/" }
       ],
       "items": {
         "type": "object",
         "properties": {
           "url": {
+            "title": "URL",
             "type": "string",
             "editor": "textfield"
           }
@@ -31,11 +35,12 @@
       "minimum": 1,
       "maximum": 5
     },
-    "cycleDelaySeconds": {
-      "title": "Optional delay before run exit",
+    "maxRequests": {
+      "title": "Maximum pages per run",
       "type": "integer",
-      "default": 0,
-      "minimum": 0
+      "default": 1000,
+      "minimum": 10,
+      "maximum": 5000
     }
   },
   "required": ["startUrls"]
