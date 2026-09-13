@@ -38,10 +38,10 @@ const crawler = new PlaywrightCrawler({
           const u = new URL(a.href, location.href);
           if (u.origin !== location.origin) continue;
           u.hash = '';
-          const path = u.pathname.replace(/\+/g, '/');
-          if (/^\\/mcq/[^/]+\\/?$/i.test(path)) mcq.add(u.href);
+          const path = u.pathname.replace(/\/+/g, '/');
+          if (/^\/mcq\/[^/]+\/?$/i.test(path)) mcq.add(u.href);
           // Subject/chapter/index pages are useful because the home page may not expose MCQ URLs directly.
-          if (/^\\/(subject|chapter)\\//i.test(path)) index.add(u.href);
+          if (/^\/(subject|chapter)\//i.test(path)) index.add(u.href);
         } catch {}
       }
       return { mcq: [...mcq], index: [...index] };
