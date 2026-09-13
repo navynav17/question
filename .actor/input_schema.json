@@ -15,6 +15,7 @@
         "type": "object",
         "properties": {
           "url": {
+            "title": "URL",
             "type": "string",
             "editor": "textfield"
           }
