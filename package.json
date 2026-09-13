@@ -1,13 +1,14 @@
 {
   "name": "cee-mcq-apify-actor",
   "version": "1.0.0",
+  "description": "Apify Actor for collecting CEE MCQs with answers and explanations.",
   "type": "module",
   "private": true,
   "scripts": {
     "start": "node src/actor.js"
   },
   "dependencies": {
-    "apify": "^3.4.0",
-    "crawlee": "^3.13.0"
+    "apify": "^3.5.2",
+    "crawlee": "^3.15.0"
   }
 }
