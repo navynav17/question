@@ -14,6 +14,7 @@
         "properties": {
           "url": {
             "title": "URL",
+            "description": "A page or direct MCQ URL to start from.",
             "type": "string",
             "editor": "textfield"
           }
