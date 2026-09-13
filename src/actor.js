@@ -45,7 +45,7 @@ const crawler = new PlaywrightCrawler({
 
   async requestHandler({ page, request, log }) {
     if (request.userData?.type === 'mcq') {
-      const username = String(INPUT.username ?? 'Abcdefgh').trim() || 'Abcdefgh';
+      const username = String(INPUT.username ?? '').trim() || 'Abcdefgh';
 
       const started = await page.evaluate((username) => {
         const clean = s => (s || '').replace(/\s+/g, ' ').trim();
@@ -164,7 +164,7 @@ const crawler = new PlaywrightCrawler({
         log.info('Submit action: ' + JSON.stringify(submitResult));
 
         if (submitResult.clicked) {
-          await page.waitForTimeout(1200);
+          await page.waitForTimeout(2000);
 
           if (submitResult.confirmation) {
             const confirmed = await page.evaluate(() => {
@@ -185,14 +185,16 @@ const crawler = new PlaywrightCrawler({
           }
 
           await page.waitForFunction(
-            () =>
-              document.querySelectorAll('.question-block label.correct').length > 0 ||
-              document.querySelectorAll('.question-block .solution-text').length > 0 ||
-              /submitted|result|score|review/i.test(document.body.innerText),
-            { timeout: 30000 }
+            () => {
+              const blocks = document.querySelectorAll('.question-block').length;
+              const correct = document.querySelectorAll('.question-block label.correct').length;
+              const solutions = document.querySelectorAll('.question-block .solution-text').length;
+              return blocks > 0 && (correct >= blocks || solutions >= blocks);
+            },
+            { timeout: 60000 }
           ).catch(() => {});
 
-          await page.waitForTimeout(1000);
+          await page.waitForTimeout(1500);
         }
 
         state = await page.evaluate(() => ({
@@ -229,6 +231,8 @@ const crawler = new PlaywrightCrawler({
 
         return { subject, chapter, subchapter: '', mcqSlug };
       });
+
+      log.info('Post-submit DOM state: ' + JSON.stringify(await page.evaluate(() => ({ questionBlocks: document.querySelectorAll('.question-block').length, correct: document.querySelectorAll('.question-block label.correct').length, solutions: document.querySelectorAll('.question-block .solution-text').length, checked: document.querySelectorAll('.question-block input[type="radio"]:checked').length }))));
 
       const items = await page.evaluate((meta) => {
         const clean = s => (s || '').replace(/\s+/g, ' ').trim();
