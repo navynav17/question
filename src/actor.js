@@ -1,15 +1,16 @@
 import { Actor } from 'apify';
 import { PlaywrightCrawler, RequestQueue, Dataset } from 'crawlee';
 
+await Actor.init();
+
 const INPUT = await Actor.getInput() ?? {};
 const startUrls = (INPUT.startUrls ?? [
   { url: 'https://pandeyramu.com.np/' },
 ]).map(x => typeof x === 'string' ? { url: x } : x);
 
 const maxConcurrency = Number(INPUT.maxConcurrency ?? 2);
+const maxRequests = Number(INPUT.maxRequests ?? 500);
 const cycleDelaySeconds = Number(INPUT.cycleDelaySeconds ?? 0);
-
-await Actor.init();
 
 const queue = await RequestQueue.open();
 
@@ -26,6 +27,7 @@ const dataset = await Dataset.open();
 const crawler = new PlaywrightCrawler({
   requestQueue: queue,
   maxConcurrency,
+  maxRequestsPerCrawl: maxRequests,
   navigationTimeoutSecs: 60,
   requestHandlerTimeoutSecs: 120,
   maxRequestRetries: 3,
