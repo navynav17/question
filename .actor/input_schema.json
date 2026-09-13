@@ -10,7 +10,9 @@
       "type": "array",
       "editor": "requestListSources",
       "default": [
-        { "url": "https://pandeyramu.com.np/" }
+        {
+          "url": "https://pandeyramu.com.np/"
+        }
       ]
     },
     "maxConcurrency": {
@@ -28,6 +30,12 @@
       "default": 500,
       "minimum": 1,
       "maximum": 5000
+    },
+    "username": {
+      "title": "Fixed username",
+      "description": "Name entered on every MCQ start screen. The actor never generates a random username.",
+      "type": "string",
+      "default": "Apify Collector"
     }
   },
   "required": []
