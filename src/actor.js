@@ -223,6 +223,29 @@ const crawler = new PlaywrightCrawler({
       });
 
       log.info('Post-submit DOM state: ' + JSON.stringify(await page.evaluate(() => ({ questionBlocks: document.querySelectorAll('.question-block').length, correct: document.querySelectorAll('.question-block label.correct').length, solutions: document.querySelectorAll('.question-block .solution-text').length, checked: document.querySelectorAll('.question-block input[type="radio"]:checked').length }))));
+      const postDebug = await page.evaluate(() => {
+        const blocks = [...document.querySelectorAll('.question-block')].slice(0, 2);
+        return blocks.map((q, i) => ({
+          index: i + 1,
+          className: q.className,
+          text: (q.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 1500),
+          inputs: [...q.querySelectorAll('input')].map(x => ({
+            type: x.type,
+            value: x.value,
+            checked: x.checked,
+            className: x.className,
+            parentClass: x.parentElement?.className || '',
+            parentText: (x.parentElement?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300)
+          })),
+          labels: [...q.querySelectorAll('label')].map(x => ({
+            className: x.className,
+            text: (x.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300)
+          })),
+          descendantsWithAnswerClass: [...q.querySelectorAll('[class*=correct i],[class*=answer i],[class*=solution i],[class*=explanation i]')]
+            .slice(0, 20).map(x => ({ tag: x.tagName, className: x.className, text: (x.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300) }))
+        }));
+      });
+      log.info('MCQ extraction debug: ' + JSON.stringify(postDebug));
 
       const items = await page.evaluate((meta) => {
         const clean = s => (s || '').replace(/\s+/g, ' ').trim();
