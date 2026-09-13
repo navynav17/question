@@ -93,22 +93,72 @@ const crawler = new PlaywrightCrawler({
       explanations: document.querySelectorAll('.question-block .solution-text').length
     }));
 
-    const items = await page.evaluate(() => [...document.querySelectorAll('.question-block')].map(q => {
+    const pageMeta = await page.evaluate(() => {
+      const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+      const crumbs = [...document.querySelectorAll(
+        'nav a, .breadcrumb a, .breadcrumbs a, [aria-label*="breadcrumb" i] a'
+      )].map(a => ({
+        text: clean(a.textContent),
+        href: a.href || ''
+      })).filter(x => x.text);
+
+      const pathParts = location.pathname.split('/').filter(Boolean);
+      const mcqIndex = pathParts.indexOf('mcq');
+      const mcqSlug = mcqIndex >= 0 ? pathParts[mcqIndex + 1] : '';
+
+      let subject = '';
+      let chapter = '';
+      let subchapter = '';
+
+      for (const b of crumbs) {
+        const p = (() => { try { return new URL(b.href, location.href).pathname; } catch { return ''; } })();
+        if (/\\/subject\\//i.test(p)) subject = b.text;
+        if (/\\/chapter\\//i.test(p)) chapter = b.text;
+        if (/\\/subchapter\\//i.test(p)) subchapter = b.text;
+      }
+
+      // Some pages expose hierarchy only as plain breadcrumb text.
+      if (!chapter) {
+        const plain = crumbs.map(x => x.text).filter(x => !/^home$/i.test(x));
+        const mcqPos = plain.findIndex(x => /^mcq$/i.test(x));
+        if (mcqPos > 0) chapter = plain[mcqPos - 1];
+      }
+
+      // The MCQ slug itself is the safest chapter fallback for /mcq/<slug>/ pages.
+      if (!chapter && mcqSlug) {
+        chapter = mcqSlug
+          .replace(/[-_]+/g, ' ')
+          .replace(/\\b\\w/g, m => m.toUpperCase());
+      }
+
+      // If a page has an explicit heading matching the chapter, prefer it.
+      const headings = [...document.querySelectorAll('h1, h2, .page-title, .chapter-title')]
+        .map(x => clean(x.textContent))
+        .filter(Boolean);
+      if (!chapter && headings[0]) chapter = headings[0];
+
+      return { subject, chapter, subchapter, mcqSlug };
+    });
+
+    const items = await page.evaluate((pageMeta) => [...document.querySelectorAll('.question-block')].map(q => {
       const opts = {};
       q.querySelectorAll('input[type="radio"]').forEach(input => {
         opts[input.value] = input.closest('label')?.querySelector('.option-text')?.textContent.trim() || '';
       });
       return {
+        subject: pageMeta.subject || '',
+        chapter: pageMeta.chapter || '',
+        subchapter: pageMeta.subchapter || '',
         sourceUrl: location.href,
         mcqUrl: location.href,
         questionId: q.dataset.questionId || '',
         number: Number(q.dataset.questionNumber || 0),
-        question: (q.querySelector('strong')?.textContent || '').trim().replace(/^\d+\.\s*/, ''),
+        question: (q.querySelector('strong')?.textContent || '').trim().replace(/^\\d+\\.\\s*/, ''),
         A: opts.A || '', B: opts.B || '', C: opts.C || '', D: opts.D || '',
         answer: q.querySelector('label.correct input[type="radio"]')?.value || '',
         explanation: q.querySelector('.solution-text')?.textContent.trim() || ''
       };
-    }));
+    }), pageMeta);
 
     let fresh = 0, duplicate = 0, incomplete = 0;
     for (const item of items) {
