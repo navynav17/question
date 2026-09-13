@@ -17,7 +17,7 @@
       "title": "Max Concurrency",
       "description": "Maximum number of pages processed concurrently.",
       "type": "integer",
-      "default": 2,
+      "default": 1,
       "minimum": 1,
       "maximum": 5
     },
@@ -25,23 +25,23 @@
       "title": "Max Requests",
       "description": "Maximum total pages visited in one run.",
       "type": "integer",
-      "default": 500,
+      "default": 3000,
       "minimum": 1,
       "maximum": 5000
     },
     "username": {
       "title": "Fixed username",
-      "description": "Name entered on every MCQ start screen.",
+      "description": "Name entered on every MCQ start screen. Use the same username for all tests.",
       "type": "string",
       "editor": "textfield",
       "default": "Apify Collector"
     },
     "testMode": {
       "title": "Test mode",
-      "description": "When enabled, a direct /mcq/slug/ start URL is processed only as an MCQ test page.",
+      "description": "When enabled, process only the supplied direct MCQ URL.",
       "type": "boolean",
       "editor": "checkbox",
-      "default": false
+      "default": true
     }
   },
   "required": []
