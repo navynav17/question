@@ -43,20 +43,101 @@ const crawler = new PlaywrightCrawler({
 
   async requestHandler({ page, request, log }) {
     if (request.userData?.type === 'mcq') {
-      // Some MCQ pages require the ?new=1 state to start a fresh quiz.
-      if (!/[?&]new=1(?:&|$)/i.test(request.url)) {
-        const freshUrl = request.url + (request.url.includes('?') ? '&' : '?') + 'new=1';
-        await queue.addRequest({
-          url: freshUrl,
-          uniqueKey: 'mcq-new:' + freshUrl,
-          userData: { type: 'mcq' }
-        });
-        return;
+      // The site first shows a "Enter your name to begin the test" screen.
+      // Use one fixed username for every run (never generate a random username).
+      // After starting, wait for the actual question blocks, then submit the test
+      // to expose the correct answers and explanations.
+      const username = String(INPUT.username ?? 'Apify Collector').trim() || 'Apify Collector';
+
+      const started = await page.evaluate((username) => {
+        const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
+        const visible = el => {
+          if (!el) return false;
+          const s = getComputedStyle(el);
+          const r = el.getBoundingClientRect();
+          return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+        };
+
+        const text = clean(document.body.innerText).toLowerCase();
+        const startButton = [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
+          .find(el => visible(el) && /start\\s+mcq\\s+test/i.test(clean(el.innerText || el.value)));
+
+        const nameInput = [...document.querySelectorAll(
+          'input[type="text"], input:not([type]), input[name*="name" i], input[id*="name" i], input[placeholder*="name" i]'
+        )].find(el => visible(el));
+
+        const looksLikeStartScreen =
+          /enter your name to begin the test/i.test(text) ||
+          !!startButton;
+
+        if (!looksLikeStartScreen) {
+          return { startScreen: false, filled: false, clicked: false };
+        }
+
+        if (nameInput) {
+          const setter = Object.getOwnPropertyDescriptor(
+            HTMLInputElement.prototype, 'value'
+          )?.set;
+          if (setter) setter.call(nameInput, username);
+          else nameInput.value = username;
+
+          nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+          nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+          nameInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        }
+
+        if (startButton) {
+          startButton.click();
+          return {
+            startScreen: true,
+            filled: !!nameInput,
+            clicked: true,
+            username
+          };
+        }
+
+        const form = nameInput?.closest('form');
+        if (form) {
+          if (typeof form.requestSubmit === 'function') form.requestSubmit();
+          else form.submit();
+
+          return {
+            startScreen: true,
+            filled: true,
+            clicked: true,
+            username
+          };
+        }
+
+        return {
+          startScreen: true,
+          filled: !!nameInput,
+          clicked: false,
+          username
+        };
+      }, username);
+
+      if (started.startScreen) {
+        log.info('MCQ start screen: ' + JSON.stringify(started));
+
+        if (!started.clicked) {
+          throw new Error('MCQ start screen detected but the name field/start button could not be used.');
+        }
+
+        await page.waitForLoadState('domcontentloaded').catch(() => {});
+        await page.waitForTimeout(1200);
+        await page.waitForLoadState('networkidle').catch(() => {});
+        await page.waitForTimeout(1200);
       }
 
-      // The important part: reproduce the browser workflow.
-      // Do not call form.submit() because that can bypass the site's submit
-      // handler. Click the real submit button/requestSubmit instead.
+      // Wait for the quiz itself to appear. This also handles sites where
+      // clicking Start changes the DOM without navigating.
+      await page.waitForFunction(
+        () => document.querySelectorAll('.question-block').length > 0 ||
+              /no questions|question not found/i.test(document.body.innerText),
+        { timeout: 30000 }
+      ).catch(() => {});
+
       const initial = await page.evaluate(() => ({
         url: location.href,
         forms: document.querySelectorAll('form').length,
@@ -70,16 +151,23 @@ const crawler = new PlaywrightCrawler({
         ', buttons=' + JSON.stringify(initial.buttons) +
         ', questionBlocks=' + initial.questionBlocks);
 
-      // If the page already contains the submitted/review state, extract it.
+      // The important part: submit the real quiz after all questions are loaded.
+      // Correct answers/explanations are only present in the submitted/review state.
       let state = await page.evaluate(() => ({
         questionBlocks: document.querySelectorAll('.question-block').length,
         correct: document.querySelectorAll('.question-block label.correct').length,
         solutions: document.querySelectorAll('.question-block .solution-text').length
       }));
 
-      if (state.questionBlocks === 0 || state.correct === 0) {
+      if (state.questionBlocks > 0 && (state.correct === 0 || state.solutions === 0)) {
         const clicked = await page.evaluate(() => {
-          const normalize = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+          const normalize = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+          const visible = el => {
+            if (!el) return false;
+            const s = getComputedStyle(el);
+            const r = el.getBoundingClientRect();
+            return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+          };
 
           const candidates = [
             ...document.querySelectorAll('button'),
@@ -89,15 +177,13 @@ const crawler = new PlaywrightCrawler({
 
           const button = candidates.find(el => {
             const text = normalize(el.innerText || el.value || el.getAttribute('aria-label'));
-            return /submit|finish|show answers|check answers|view result|see result|reveal/i.test(text);
+            return visible(el) &&
+              /submit|finish|show answers|check answers|view result|see result|reveal/i.test(text);
           });
 
           if (button) {
             button.click();
-            return {
-              clicked: true,
-              text: (button.innerText || button.value || '').trim()
-            };
+            return { clicked: true, text: (button.innerText || button.value || '').trim() };
           }
 
           const form = document.querySelector('form');
