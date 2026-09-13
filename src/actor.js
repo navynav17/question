@@ -22,7 +22,15 @@ const kv = await Actor.openKeyValueStore();
 const seen = (await kv.getValue('SEEN_QUESTIONS')) ?? {};
 
 for (const url of startUrls) {
-  const directMcq = /^https?:\\/\\/[^/]+\\/mcq\\/[^/]+\\/?(?:\\?.*)?$/i.test(url);
+  const directMcq = (() => {
+    try {
+      const u = new URL(url);
+      return u.origin === 'https://pandeyramu.com.np' &&
+        /^\\/mcq\\/[^/]+\\/?$/.test(u.pathname);
+    } catch {
+      return false;
+    }
+  })();
   const type = INPUT.testMode && directMcq ? 'mcq' : 'discover';
   await queue.addRequest({
     url,
