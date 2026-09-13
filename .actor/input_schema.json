@@ -1,18 +1,14 @@
 {
   "title": "CEE MCQ extractor input",
-  "description": "Crawl all CEE chapter pages and extract questions, options, correct answers and explanations.",
+  "description": "Crawl CEE chapter pages and extract questions, options, correct answers and explanations.",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
     "startUrls": {
       "title": "Start URLs",
-      "description": "Pages where chapter links should be discovered.",
+      "description": "Pages where chapter links or a direct MCQ URL should be discovered.",
       "type": "array",
       "editor": "requestListSources",
-      "items": {
-        "type": "string",
-        "description": "A page or direct MCQ URL to start from."
-      },
       "default": [
         "https://pandeyramu.com.np/"
       ]
@@ -42,7 +38,7 @@
     },
     "testMode": {
       "title": "Test mode",
-      "description": "When enabled, treat a direct /mcq/slug/ start URL as an MCQ test page and do not crawl the site hierarchy.",
+      "description": "When enabled, a direct /mcq/slug/ start URL is processed only as an MCQ test page.",
       "type": "boolean",
       "editor": "checkbox",
       "default": false
