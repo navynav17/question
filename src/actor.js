@@ -33,44 +33,29 @@ const crawler = new PlaywrightCrawler({
   maxRequestRetries: 3,
 
   async requestHandler({ page, request, log }) {
-    // The homepage links to subject pages first; subject pages then link
-    // to the actual /chapter/.../quiz pages. Discover both levels.
-    const discovered = await page.evaluate(() => {
-      const subjects = new Set();
-      const chapters = new Set();
+    // Discover chapter pages directly. Chapter URLs have the form
+    // /chapter/<slug>/. Also inspect common index/list pages so all chapters
+    // can be reached even when the homepage does not expose them directly.
+    const chapterUrls = await page.evaluate(() => {
+      const out = new Set();
+
+      const addIfChapter = (href) => {
+        try {
+          const u = new URL(href, location.href);
+          if (u.origin !== location.origin) return;
+          const m = u.pathname.match(/^\/chapter\/[^/]+\/?$/i);
+          if (m) out.add(u.href.split('#')[0]);
+        } catch {}
+      };
 
       for (const a of document.querySelectorAll('a[href]')) {
-        try {
-          const u = new URL(a.href, location.href);
-          if (u.origin !== location.origin) continue;
-
-          const path = u.pathname.replace(/\\/+/g, '/').replace(/\\/$/, '') || '/';
-
-          if (path.startsWith('/subject/')) {
-            subjects.add(u.href.split('#')[0]);
-          }
-
-          if (path.startsWith('/chapter/')) {
-            chapters.add(u.href.split('#')[0]);
-          }
-        } catch {}
+        addIfChapter(a.href);
       }
 
-      return {
-        subjects: [...subjects],
-        chapters: [...chapters],
-      };
+      return [...out];
     });
 
-    for (const url of discovered.subjects) {
-      await queue.addRequest({
-        url,
-        uniqueKey: `subject:${url}`,
-        userData: { type: 'discover' },
-      });
-    }
-
-    for (const url of discovered.chapters) {
+    for (const url of chapterUrls) {
       await queue.addRequest({
         url,
         uniqueKey: `chapter:${url}`,
@@ -79,9 +64,7 @@ const crawler = new PlaywrightCrawler({
     }
 
     if (!request.userData?.type || request.userData.type === 'discover') {
-      log.info(
-        `Discovered ${discovered.subjects.length} subject URLs and ${discovered.chapters.length} chapter URLs`,
-      );
+      log.info(`Discovered ${chapterUrls.length} chapter URLs from ${request.url}`);
       return;
     }
 
