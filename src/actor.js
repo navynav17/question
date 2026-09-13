@@ -26,12 +26,12 @@ for (const url of startUrls) {
     try {
       const u = new URL(url);
       return u.origin === 'https://pandeyramu.com.np' &&
-        /^\\/mcq\\/[^/]+\\/?$/.test(u.pathname);
+        /^\/mcq\/[^/]+\/?$/i.test(u.pathname);
     } catch {
       return false;
     }
   })();
-  const type = INPUT.testMode && directMcq ? 'mcq' : 'discover';
+  const type = directMcq ? 'mcq' : 'discover';
   await queue.addRequest({
     url,
     uniqueKey: (type === 'mcq' ? 'mcq:' : 'seed:') + url,
