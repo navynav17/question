@@ -1,0 +1,8 @@
+{
+  "actorSpecification": 1,
+  "name": "cee-mcq-all-chapters",
+  "title": "CEE MCQ All Chapters Extractor",
+  "version": "1.0",
+  "buildTag": "latest",
+  "input": "./input_schema.json"
+}
