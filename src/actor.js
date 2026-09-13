@@ -22,10 +22,12 @@ const kv = await Actor.openKeyValueStore();
 const seen = (await kv.getValue('SEEN_QUESTIONS')) ?? {};
 
 for (const url of startUrls) {
+  const directMcq = /^https?:\\/\\/[^/]+\\/mcq\\/[^/]+\\/?(?:\\?.*)?$/i.test(url);
+  const type = INPUT.testMode && directMcq ? 'mcq' : 'discover';
   await queue.addRequest({
     url,
-    uniqueKey: 'seed:' + url,
-    userData: { type: 'discover' }
+    uniqueKey: (type === 'mcq' ? 'mcq:' : 'seed:') + url,
+    userData: { type }
   });
 }
 
