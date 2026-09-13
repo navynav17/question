@@ -127,62 +127,44 @@ const crawler = new PlaywrightCrawler({
       }));
 
       if (state.questionBlocks > 0 && (state.correct === 0 || state.solutions === 0)) {
-        const submitResult = await page.evaluate(() => {
-          const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-          const visible = el => {
-            if (!el) return false;
-            const s = getComputedStyle(el);
-            const r = el.getBoundingClientRect();
-            return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-          };
+        const buttonTexts = await page.locator('button, input[type="submit"], input[type="button"]').allTextContents();
+        log.info('Submit candidates: ' + JSON.stringify(buttonTexts.map(x => x.trim()).filter(Boolean)));
 
-          const candidates = [...document.querySelectorAll(
-            'button, input[type="submit"], input[type="button"]'
-          )];
+        const submitTest = page.getByRole('button', { name: /^submit test$/i }).first();
+        const submitNow = page.getByRole('button', { name: /^submit now$/i }).first();
 
-          const findButton = re => candidates.find(el =>
-            visible(el) && re.test(clean(el.innerText || el.value || el.getAttribute('aria-label')))
-          );
+        let submitResult = { clicked: false, text: '' };
 
-          const finalButton = findButton(/^submit\s+test$/i) ||
-            findButton(/^(finish|show answers|check answers|view result|see result|reveal)$/i);
-
-          if (finalButton) {
-            finalButton.click();
-            return { clicked: true, text: clean(finalButton.innerText || finalButton.value) };
+        if (await submitTest.count()) {
+          await submitTest.click({ timeout: 10000 });
+          submitResult = { clicked: true, text: 'Submit Test', confirmation: false };
+        } else if (await submitNow.count()) {
+          await submitNow.click({ timeout: 10000 });
+          submitResult = { clicked: true, text: 'Submit Now', confirmation: true };
+        } else {
+          const generic = page.getByRole('button', { name: /^(finish|show answers|check answers|view result|see result|reveal)$/i }).first();
+          if (await generic.count()) {
+            await generic.click({ timeout: 10000 });
+            submitResult = { clicked: true, text: 'generic submit', confirmation: false };
           }
-
-          const submitNow = findButton(/^submit\s+now$/i);
-          if (submitNow) {
-            submitNow.click();
-            return { clicked: true, text: clean(submitNow.innerText || submitNow.value), confirmation: true };
-          }
-
-          return { clicked: false, text: '' };
-        });
+        }
 
         log.info('Submit action: ' + JSON.stringify(submitResult));
 
         if (submitResult.clicked) {
-          await page.waitForTimeout(2000);
+          await page.waitForTimeout(1500);
 
           if (submitResult.confirmation) {
-            const confirmed = await page.evaluate(() => {
-              const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-              const visible = el => {
-                if (!el) return false;
-                const s = getComputedStyle(el);
-                const r = el.getBoundingClientRect();
-                return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-              };
-              const btn = [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
-                .find(el => visible(el) && /^submit\s+test$/i.test(clean(el.innerText || el.value)));
-              if (!btn) return false;
-              btn.click();
-              return true;
-            });
-            log.info('Submit confirmation: ' + JSON.stringify({ clicked: confirmed }));
+            const confirmedButton = page.getByRole('button', { name: /^submit test$/i }).first();
+            if (await confirmedButton.count()) {
+              await confirmedButton.click({ timeout: 10000 });
+              log.info('Submit confirmation: {"clicked":true}');
+            } else {
+              log.info('Submit confirmation: {"clicked":false,"reason":"button not found"}');
+            }
           }
+
+          await page.waitForTimeout(2000);
 
           await page.waitForFunction(
             () => {
