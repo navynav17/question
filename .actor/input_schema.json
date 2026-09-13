@@ -9,6 +9,17 @@
       "description": "Pages where chapter links should be discovered.",
       "type": "array",
       "editor": "requestListSources",
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "title": "URL",
+            "type": "string",
+            "editor": "textfield"
+          }
+        },
+        "required": ["url"]
+      },
       "default": [
         {
           "url": "https://pandeyramu.com.np/"
