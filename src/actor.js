@@ -1,55 +1,63 @@
+import crypto from 'node:crypto';
 import { Actor } from 'apify';
 import { PlaywrightCrawler, RequestQueue, Dataset } from 'crawlee';
 
 await Actor.init();
 
 const INPUT = await Actor.getInput() ?? {};
-const startUrls = (INPUT.startUrls ?? [
-  { url: 'https://pandeyramu.com.np/' },
-]).map(x => typeof x === 'string' ? { url: x } : x);
+
+const defaultStartUrls = [
+  'https://pandeyramu.com.np/all-subjects/',
+  'https://pandeyramu.com.np/subject/physics/',
+  'https://pandeyramu.com.np/subject/chemistry/',
+  'https://pandeyramu.com.np/subject/botany/',
+  'https://pandeyramu.com.np/subject/zoology/',
+  'https://pandeyramu.com.np/subject/mat/',
+];
+
+const startUrls = (INPUT.startUrls?.length ? INPUT.startUrls : defaultStartUrls)
+  .map(x => typeof x === 'string' ? { url: x } : x);
 
 const maxConcurrency = Number(INPUT.maxConcurrency ?? 2);
-const maxRequests = Number(INPUT.maxRequests ?? 500);
-const cycleDelaySeconds = Number(INPUT.cycleDelaySeconds ?? 0);
+const maxRequests = Number(INPUT.maxRequests ?? 1000);
 
 const queue = await RequestQueue.open();
+const dataset = await Dataset.open();
+const kvStore = await Actor.openKeyValueStore();
+
+// Persistent across Actor runs. This prevents the same questionId from being
+// inserted again when a later run selects the same MCQ.
+const seen = (await kvStore.getValue('SEEN_QUESTIONS')) ?? {};
 
 for (const item of startUrls) {
   await queue.addRequest({
     url: item.url,
-    uniqueKey: `seed:${item.url}`,
+    uniqueKey: 'seed:' + item.url,
     userData: { type: 'discover' },
   });
 }
-
-const dataset = await Dataset.open();
 
 const crawler = new PlaywrightCrawler({
   requestQueue: queue,
   maxConcurrency,
   maxRequestsPerCrawl: maxRequests,
   navigationTimeoutSecs: 60,
-  requestHandlerTimeoutSecs: 120,
+  requestHandlerTimeoutSecs: 180,
   maxRequestRetries: 3,
 
   async requestHandler({ page, request, log }) {
-    // Discover chapter pages directly. Chapter URLs have the form
-    // /chapter/<slug>/. Also inspect common index/list pages so all chapters
-    // can be reached even when the homepage does not expose them directly.
     const chapterUrls = await page.evaluate(() => {
       const out = new Set();
 
-      const addIfChapter = (href) => {
-        try {
-          const u = new URL(href, location.href);
-          if (u.origin !== location.origin) return;
-          const m = u.pathname.match(/^\/chapter\/[^/]+\/?$/i);
-          if (m) out.add(u.href.split('#')[0]);
-        } catch {}
-      };
-
       for (const a of document.querySelectorAll('a[href]')) {
-        addIfChapter(a.href);
+        try {
+          const u = new URL(a.href, location.href);
+          if (u.origin !== location.origin) continue;
+
+          if (/^\/chapter\/[^/]+\/?$/i.test(u.pathname)) {
+            out.add(u.href.split('#')[0]);
+          }
+        } catch {}
       }
 
       return [...out];
@@ -58,30 +66,34 @@ const crawler = new PlaywrightCrawler({
     for (const url of chapterUrls) {
       await queue.addRequest({
         url,
-        uniqueKey: `chapter:${url}`,
+        uniqueKey: 'chapter:' + url,
         userData: { type: 'chapter' },
       });
     }
 
-    if (!request.userData?.type || request.userData.type === 'discover') {
-      log.info(`Discovered ${chapterUrls.length} chapter URLs from ${request.url}`);
+    if (request.userData?.type !== 'chapter') {
+      log.info('Discovered ' + chapterUrls.length + ' chapter URLs from ' + request.url);
       return;
     }
 
-    // Extract the already-rendered result page. If the chapter is not yet
-    // submitted, submit the quiz form with a random username and reload.
+    // Submit the quiz in the browser, exactly like the working Chrome workflow.
     const state = await page.evaluate(() => {
       const form = document.querySelector('form.quiz-form');
-      if (!form) return { hasForm: false };
-
-      return {
-        hasForm: true,
-        submitted: form.classList.contains('submitted'),
-      };
+      return form
+        ? {
+            hasForm: true,
+            submitted: form.classList.contains('submitted'),
+            questionCount: document.querySelectorAll('.question-block').length,
+          }
+        : {
+            hasForm: false,
+            submitted: false,
+            questionCount: document.querySelectorAll('.question-block').length,
+          };
     });
 
     if (state.hasForm && !state.submitted) {
-      const username = `Collector_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+      const username = 'Collector_' + crypto.randomUUID().replaceAll('-', '').slice(0, 12);
 
       await page.evaluate((username) => {
         const form = document.querySelector('form.quiz-form');
@@ -94,16 +106,30 @@ const crawler = new PlaywrightCrawler({
           input.name = 'name';
           form.appendChild(input);
         }
+
         input.value = username;
         form.submit();
       }, username);
 
       await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(500);
+    }
+
+    const resultState = await page.evaluate(() => ({
+      submitted: !!document.querySelector('form.quiz-form.submitted'),
+      questionCount: document.querySelectorAll('.question-block').length,
+      answers: document.querySelectorAll('.question-block label.correct').length,
+      explanations: document.querySelectorAll('.question-block .solution-text').length,
+    }));
+
+    if (!resultState.submitted) {
+      log.warning('Quiz was not submitted successfully: ' + request.url);
     }
 
     const items = await page.evaluate(() => {
       return [...document.querySelectorAll('.question-block')].map(q => {
         const opts = {};
+
         for (const input of q.querySelectorAll('input[type="radio"]')) {
           const label = input.closest('label');
           opts[input.value] =
@@ -123,53 +149,72 @@ const crawler = new PlaywrightCrawler({
           C: opts.C || '',
           D: opts.D || '',
           answer: q.querySelector('label.correct input[type="radio"]')?.value || '',
-          explanation: q.querySelector('.solution-text')?.textContent.trim() || '',
+          explanation:
+            q.querySelector('.solution-text')?.textContent.trim() || '',
         };
       });
     });
 
-    // Persistent dataset dedupe: build a key from questionId when available,
-    // otherwise chapter URL + normalized question text.
-    const seen = new Set();
+    let newCount = 0;
+    let duplicateCount = 0;
+    let incompleteCount = 0;
 
     for (const item of items) {
-      const normalized = String(item.question || '')
+      const normalizedQuestion = String(item.question || '')
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
 
-      const key = item.questionId
-        ? `qid:${item.questionId}`
-        : `text:${String(item.chapterUrl).toLowerCase()}|${normalized}`;
+      if (!normalizedQuestion) continue;
 
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const dedupeKey = item.questionId
+        ? 'qid:' + item.questionId
+        : 'sha:' + crypto
+            .createHash('sha256')
+            .update(item.chapterUrl + '|' + normalizedQuestion)
+            .digest('hex');
 
-      // Apify Dataset itself does not provide a cheap arbitrary-key lookup
-      // per item. Use a deterministic uniqueKey in the request pipeline and
-      // store a dedupeKey so downstream storage can upsert on it.
+      if (seen[dedupeKey]) {
+        duplicateCount++;
+        continue;
+      }
+
+      // Retry incomplete items on a future run instead of permanently marking them.
+      if (!item.answer || !item.explanation) {
+        incompleteCount++;
+        continue;
+      }
+
+      seen[dedupeKey] = 1;
+
       await dataset.pushData({
         ...item,
-        dedupeKey: key,
+        dedupeKey,
         collectedAt: new Date().toISOString(),
       });
+
+      newCount++;
     }
 
-    log.info(`Extracted ${items.length} MCQs from ${request.url}`);
+    log.info(
+      'Chapter ' + request.url +
+      ': ' + items.length +
+      ' questions, ' + newCount +
+      ' new, ' + duplicateCount +
+      ' duplicates, ' + incompleteCount +
+      ' incomplete'
+    );
   },
 });
 
 await crawler.run();
 
+await kvStore.setValue('SEEN_QUESTIONS', seen);
+
 await Actor.setValue('RUN_STATS', {
   completedAt: new Date().toISOString(),
-  message: 'Cycle completed. Run the actor again for another cycle.',
+  startUrls: startUrls.map(x => x.url),
+  message: 'Chapter cycle completed. Run again to collect newly available questions; duplicates are skipped.',
 });
-
-if (cycleDelaySeconds > 0) {
-  // Apify runs are finite. For continuous repetition, configure an Apify
-  // schedule/webhook to start another run after this run completes.
-  await new Promise(resolve => setTimeout(resolve, cycleDelaySeconds * 1000));
-}
 
 await Actor.exit();
