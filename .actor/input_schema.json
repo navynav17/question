@@ -10,7 +10,9 @@
       "type": "array",
       "editor": "requestListSources",
       "default": [
-        { "url": "https://pandeyramu.com.np/" }
+        {
+          "url": "https://pandeyramu.com.np/"
+        }
       ]
     },
     "maxConcurrency": {
@@ -35,6 +37,13 @@
       "type": "string",
       "editor": "textfield",
       "default": "Apify Collector"
+    },
+    "testMode": {
+      "title": "Test mode",
+      "description": "When enabled, treat a direct /mcq/slug/ start URL as an MCQ test page and do not crawl the site hierarchy.",
+      "type": "boolean",
+      "editor": "checkbox",
+      "default": false
     }
   },
   "required": []
