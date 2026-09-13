@@ -4,9 +4,13 @@ import { PlaywrightCrawler, RequestQueue, Dataset } from 'crawlee';
 
 await Actor.init();
 const INPUT = await Actor.getInput() ?? {};
-const startUrls = (INPUT.startUrls?.length ? INPUT.startUrls : [
+const configuredUrls = (INPUT.startUrls?.length ? INPUT.startUrls : []).map(x => typeof x === 'string' ? x : x.url);
+const startUrls = [...new Set([
+  ...configuredUrls,
+  'https://pandeyramu.com.np/',
   'https://pandeyramu.com.np/mcq/',
-]).map(x => typeof x === 'string' ? { url: x } : x);
+  'https://pandeyramu.com.np/mcq/environmental-pollution/'
+].filter(Boolean))].map(url => ({ url }));
 
 const queue = await RequestQueue.open();
 const dataset = await Dataset.open();
@@ -26,25 +30,33 @@ const crawler = new PlaywrightCrawler({
   maxRequestRetries: 3,
 
   async requestHandler({ page, request, log }) {
-    const mcqUrls = await page.evaluate(() => {
-      const out = new Set();
+    const discovered = await page.evaluate(() => {
+      const mcq = new Set();
+      const index = new Set();
       for (const a of document.querySelectorAll('a[href]')) {
         try {
           const u = new URL(a.href, location.href);
-          if (u.origin === location.origin && /^\/mcq\/[^/]+\/?$/i.test(u.pathname)) {
-            out.add(u.href.split('#')[0]);
-          }
+          if (u.origin !== location.origin) continue;
+          u.hash = '';
+          const path = u.pathname.replace(/\\/+/g, '/');
+          if (/^\\/mcq/[^/]+\\/?$/i.test(path)) mcq.add(u.href);
+          // Subject/chapter/index pages are useful because the home page may not expose MCQ URLs directly.
+          if (/^\\/(subject|chapter)\\//i.test(path)) index.add(u.href);
         } catch {}
       }
-      return [...out];
+      return { mcq: [...mcq], index: [...index] };
     });
 
-    for (const url of mcqUrls) await queue.addRequest({
+    for (const url of discovered.mcq) await queue.addRequest({
       url, uniqueKey: 'mcq:' + url, userData: { type: 'mcq' }
+    });
+    for (const url of discovered.index) await queue.addRequest({
+      url, uniqueKey: 'index:' + url, userData: { type: 'discover' }
     });
 
     if (request.userData?.type !== 'mcq') {
-      log.info('Discovered ' + mcqUrls.length + ' MCQ collection URLs from ' + request.url);
+      log.info('From ' + request.url + ': discovered ' + discovered.mcq.length +
+        ' MCQ URLs and ' + discovered.index.length + ' index/chapter URLs');
       return;
     }
 
