@@ -38,7 +38,7 @@ const crawler = new PlaywrightCrawler({
           const u = new URL(a.href, location.href);
           if (u.origin !== location.origin) continue;
           u.hash = '';
-          const path = u.pathname.replace(/\\/+/g, '/');
+          const path = u.pathname.replace(/\+/g, '/');
           if (/^\\/mcq/[^/]+\\/?$/i.test(path)) mcq.add(u.href);
           // Subject/chapter/index pages are useful because the home page may not expose MCQ URLs directly.
           if (/^\\/(subject|chapter)\\//i.test(path)) index.add(u.href);
@@ -68,7 +68,7 @@ const crawler = new PlaywrightCrawler({
     }));
 
     if (before.hasForm && !before.submitted) {
-      const username = 'Collector_' + crypto.randomUUID().replaceAll('-', '').slice(0, 12);
+      const username = 'Collector';
       await page.evaluate((username) => {
         const form = document.querySelector('form.quiz-form');
         if (!form) return;
