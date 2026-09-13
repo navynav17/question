@@ -1,0 +1,34 @@
+{
+  "title": "CEE MCQ extractor input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "startUrls": {
+      "title": "Seed URLs",
+      "type": "array",
+      "description": "Pages from which chapter links will be discovered.",
+      "editor": "requestListSources",
+      "default": [
+        { "url": "https://pandeyramu.com.np/" }
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "editor": "textfield"
+          }
+        },
+        "required": ["url"]
+      }
+    },
+    "maxConcurrency": {
+      "title": "Max concurrency",
+      "type": "integer",
+      "default": 2,
+      "minimum": 1,
+      "maximum": 5
+    }
+  },
+  "required": ["startUrls"]
+}
