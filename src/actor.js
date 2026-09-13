@@ -247,6 +247,35 @@ const crawler = new PlaywrightCrawler({
       });
       log.info('MCQ extraction debug: ' + JSON.stringify(postDebug));
 
+      // Compactly inspect the actual answer-bearing DOM after submission.
+      // The site keeps the 50 question blocks but does not mark answers with
+      // the selectors used above, so expose attributes/classes/data fields
+      // without dumping the entire HTML into the log.
+      const answerDebug = await page.evaluate(() => {
+        const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
+        return [...document.querySelectorAll('.question-block')].slice(0, 2).map((q, i) => ({
+          index: i + 1,
+          blockAttrs: [...q.attributes].map(a => [a.name, a.value]),
+          inputAttrs: [...q.querySelectorAll('input')].map(x => ({
+            type: x.type,
+            value: x.value,
+            checked: x.checked,
+            attrs: [...x.attributes].map(a => [a.name, a.value])
+          })),
+          labelAttrs: [...q.querySelectorAll('label')].map(x => ({
+            text: clean(x.innerText).slice(0, 120),
+            className: String(x.className || ''),
+            attrs: [...x.attributes].map(a => [a.name, a.value])
+          })),
+          childSummary: [...q.querySelectorAll('*')]
+            .filter(x => /answer|correct|solution|explanation|result|feedback/i.test(String(x.className || '') + ' ' + String(x.id || '')))
+            .slice(0, 30)
+            .map(x => ({tag: x.tagName, id: x.id || '', className: String(x.className || ''), text: clean(x.innerText).slice(0, 200)})),
+          formData: [...q.querySelectorAll('input,select,textarea')].map(x => ({name:x.name||'',value:x.value||'',type:x.type||x.tagName}))
+        }));
+      });
+      log.info('MCQ answer DOM debug: ' + JSON.stringify(answerDebug));
+
       const items = await page.evaluate((meta) => {
         const clean = s => (s || '').replace(/\s+/g, ' ').trim();
 
