@@ -130,21 +130,32 @@ const crawler = new PlaywrightCrawler({
         const buttonTexts = await page.locator('button, input[type="submit"], input[type="button"]').allTextContents();
         log.info('Submit candidates: ' + JSON.stringify(buttonTexts.map(x => x.trim()).filter(Boolean)));
 
-        const submitTest = page.getByRole('button', { name: /^submit test$/i }).first();
-        const submitNow = page.getByRole('button', { name: /^submit now$/i }).first();
+        const submitNow = page.getByRole('button', { name: /^submit now$/i });
+        const submitTest = page.getByRole('button', { name: /^submit test$/i });
 
-        let submitResult = { clicked: false, text: '' };
+        async function clickVisible(locator, timeout = 10000) {
+          const count = await locator.count();
+          for (let i = 0; i < count; i++) {
+            const candidate = locator.nth(i);
+            if (await candidate.isVisible().catch(() => false)) {
+              await candidate.click({ timeout });
+              return true;
+            }
+          }
+          return false;
+        }
 
-        if (await submitTest.count()) {
-          await submitTest.click({ timeout: 10000 });
-          submitResult = { clicked: true, text: 'Submit Test', confirmation: false };
-        } else if (await submitNow.count()) {
-          await submitNow.click({ timeout: 10000 });
+        let submitResult = { clicked: false, text: '', confirmation: false };
+
+        // Submit Now is the real visible control; Submit Test is normally
+        // a confirmation action that may exist hidden in the DOM.
+        if (await clickVisible(submitNow)) {
           submitResult = { clicked: true, text: 'Submit Now', confirmation: true };
+        } else if (await clickVisible(submitTest)) {
+          submitResult = { clicked: true, text: 'Submit Test', confirmation: false };
         } else {
-          const generic = page.getByRole('button', { name: /^(finish|show answers|check answers|view result|see result|reveal)$/i }).first();
-          if (await generic.count()) {
-            await generic.click({ timeout: 10000 });
+          const generic = page.getByRole('button', { name: /^(finish|show answers|check answers|view result|see result|reveal)$/i });
+          if (await clickVisible(generic)) {
             submitResult = { clicked: true, text: 'generic submit', confirmation: false };
           }
         }
@@ -155,13 +166,10 @@ const crawler = new PlaywrightCrawler({
           await page.waitForTimeout(1500);
 
           if (submitResult.confirmation) {
-            const confirmedButton = page.getByRole('button', { name: /^submit test$/i }).first();
-            if (await confirmedButton.count()) {
-              await confirmedButton.click({ timeout: 10000 });
-              log.info('Submit confirmation: {"clicked":true}');
-            } else {
-              log.info('Submit confirmation: {"clicked":false,"reason":"button not found"}');
-            }
+            await page.waitForTimeout(500);
+            const confirmedButton = page.getByRole('button', { name: /^submit test$/i });
+            const confirmed = await clickVisible(confirmedButton, 10000);
+            log.info('Submit confirmation: ' + JSON.stringify({ clicked: confirmed }));
           }
 
           await page.waitForTimeout(2000);
