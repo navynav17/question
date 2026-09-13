@@ -45,7 +45,7 @@ const crawler = new PlaywrightCrawler({
 
   async requestHandler({ page, request, log }) {
     if (request.userData?.type === 'mcq') {
-      const username = String(INPUT.username ?? 'Apify Collector').trim() || 'Apify Collector';
+      const username = String(INPUT.username ?? 'Abcdefgh').trim() || 'Abcdefgh';
 
       const started = await page.evaluate((username) => {
         const clean = s => (s || '').replace(/\s+/g, ' ').trim();
@@ -120,7 +120,6 @@ const crawler = new PlaywrightCrawler({
         ', buttons=' + JSON.stringify(initial.buttons) +
         ', questionBlocks=' + initial.questionBlocks);
 
-      // Submit only when the page is still in the unanswered test state.
       let state = await page.evaluate(() => ({
         questionBlocks: document.querySelectorAll('.question-block').length,
         correct: document.querySelectorAll('.question-block label.correct').length,
@@ -141,9 +140,6 @@ const crawler = new PlaywrightCrawler({
             'button, input[type="submit"], input[type="button"]'
           )];
 
-          // Prefer the final "Submit Test" control. "Submit Now" can open
-          // the confirmation dialog, so if that is what the site shows,
-          // click it first and then click the confirmation.
           const findButton = re => candidates.find(el =>
             visible(el) && re.test(clean(el.innerText || el.value || el.getAttribute('aria-label')))
           );
@@ -170,8 +166,6 @@ const crawler = new PlaywrightCrawler({
         if (submitResult.clicked) {
           await page.waitForTimeout(1200);
 
-          // If "Submit Now" opened a confirmation modal, click the actual
-          // "Submit Test" button now.
           if (submitResult.confirmation) {
             const confirmed = await page.evaluate(() => {
               const clean = s => (s || '').replace(/\s+/g, ' ').trim();
@@ -190,9 +184,6 @@ const crawler = new PlaywrightCrawler({
             log.info('Submit confirmation: ' + JSON.stringify({ clicked: confirmed }));
           }
 
-          // Do not assume navigation means submission is complete.
-          // Wait specifically for the selectors used by the working browser
-          // extraction script.
           await page.waitForFunction(
             () =>
               document.querySelectorAll('.question-block label.correct').length > 0 ||
@@ -317,7 +308,6 @@ const crawler = new PlaywrightCrawler({
       return;
     }
 
-    // Discovery mode: follow subject/chapter indexes and direct /mcq/{slug}/ pages.
     const discovered = await page.evaluate(() => {
       const mcq = new Set();
       const other = new Set();
