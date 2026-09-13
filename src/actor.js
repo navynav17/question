@@ -9,11 +9,11 @@ const configuredUrls = (INPUT.startUrls ?? [])
   .map(x => typeof x === 'string' ? x : x?.url)
   .filter(Boolean);
 
-const startUrls = [...new Set([
-  ...configuredUrls,
-  'https://pandeyramu.com.np/',
-  'https://pandeyramu.com.np/mcq/'
-])];
+const startUrls = [...new Set(
+  configuredUrls.length
+    ? configuredUrls
+    : ['https://pandeyramu.com.np/']
+)];
 
 const queue = await RequestQueue.open();
 const dataset = await Dataset.open();
@@ -367,14 +367,17 @@ const crawler = new PlaywrightCrawler({
           u.hash = '';
           const path = u.pathname.replace(/\/+?/g, '/');
 
-          // All /mcq/<slug>/ pages, including pages not linked from the home page.
+          // Direct MCQ pages.
           if (/^\/mcq\/[^/]+\/?$/i.test(path)) {
             mcq.add(u.href);
           }
 
-          // Keep crawling site indexes/subject/chapter pages.
+          // The site uses chapter pages such as /chapter/cell-biology/
+          // and MCQ collection pages such as /mcq/environmental-pollution/.
+          // Crawl chapter/subject/index pages only for discovering more MCQ links.
           if (
-            /^\/(subject|chapter|biology|physics|chemistry|botany|zoology|environmental-science|environmental-studies)\//i.test(path)
+            /^\/(chapter|subject)\//i.test(path) ||
+            /^\/mcq\/?$/i.test(path)
           ) {
             other.add(u.href);
           }
