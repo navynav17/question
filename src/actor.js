@@ -33,22 +33,44 @@ const crawler = new PlaywrightCrawler({
   maxRequestRetries: 3,
 
   async requestHandler({ page, request, log }) {
-    // Discover chapter pages from every page we visit.
-    const chapterUrls = await page.evaluate(() => {
-      const out = new Set();
+    // The homepage links to subject pages first; subject pages then link
+    // to the actual /chapter/.../quiz pages. Discover both levels.
+    const discovered = await page.evaluate(() => {
+      const subjects = new Set();
+      const chapters = new Set();
+
       for (const a of document.querySelectorAll('a[href]')) {
         try {
           const u = new URL(a.href, location.href);
-          if (u.origin === location.origin &&
-              u.pathname.startsWith('/chapter/')) {
-            out.add(u.href.split('#')[0]);
+          if (u.origin !== location.origin) continue;
+
+          const path = u.pathname.replace(/\\/+/g, '/').replace(/\\/$/, '') || '/';
+
+          if (path.startsWith('/subject/')) {
+            subjects.add(u.href.split('#')[0]);
+          }
+
+          if (path.startsWith('/chapter/')) {
+            chapters.add(u.href.split('#')[0]);
           }
         } catch {}
       }
-      return [...out];
+
+      return {
+        subjects: [...subjects],
+        chapters: [...chapters],
+      };
     });
 
-    for (const url of chapterUrls) {
+    for (const url of discovered.subjects) {
+      await queue.addRequest({
+        url,
+        uniqueKey: `subject:${url}`,
+        userData: { type: 'discover' },
+      });
+    }
+
+    for (const url of discovered.chapters) {
       await queue.addRequest({
         url,
         uniqueKey: `chapter:${url}`,
@@ -57,7 +79,9 @@ const crawler = new PlaywrightCrawler({
     }
 
     if (!request.userData?.type || request.userData.type === 'discover') {
-      log.info(`Discovered ${chapterUrls.length} chapter URLs`);
+      log.info(
+        `Discovered ${discovered.subjects.length} subject URLs and ${discovered.chapters.length} chapter URLs`,
+      );
       return;
     }
 
