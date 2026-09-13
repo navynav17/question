@@ -10,21 +10,11 @@
       "type": "array",
       "editor": "requestListSources",
       "items": {
-        "type": "object",
-        "properties": {
-          "url": {
-            "title": "URL",
-            "description": "A page or direct MCQ URL to start from.",
-            "type": "string",
-            "editor": "textfield"
-          }
-        },
-        "required": ["url"]
+        "type": "string",
+        "description": "A page or direct MCQ URL to start from."
       },
       "default": [
-        {
-          "url": "https://pandeyramu.com.np/"
-        }
+        "https://pandeyramu.com.np/"
       ]
     },
     "maxConcurrency": {
