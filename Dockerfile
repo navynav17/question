@@ -1,8 +1,8 @@
-FROM apify/actor-node-playwright:22
+FROM apify/actor-node-playwright-chrome:latest
 
 COPY package*.json ./
 RUN npm install --omit=dev
 
-COPY src ./src
+COPY . ./
 
-CMD ["npm", "start"]
+CMD ["node", "src/actor.js"]
