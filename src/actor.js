@@ -132,8 +132,9 @@ const crawler = new PuppeteerCrawler({
       }));
 
       if (state.questionBlocks > 0 && (state.correct === 0 || state.solutions === 0)) {
-        const buttonTexts = await page.$eval('button, input[type="submit"], input[type="button"]', els => els.map(el => (el.innerText || el.value || '').trim()));
-        log.info('Submit candidates: ' + JSON.stringify(buttonTexts.map(x => x.trim()).filter(Boolean)));
+        const buttonTexts = await page.evaluate(() => [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
+          .map(el => (el.innerText || el.value || '').trim()));
+        log.info('Submit candidates: ' + JSON.stringify(buttonTexts.filter(Boolean)));
         const prepared = await page.evaluate(() => {
           const blocks = [...document.querySelectorAll('.question-block')];
           let selected = 0;
