@@ -90,13 +90,13 @@ const crawler = new PuppeteerCrawler({
             if (/^\/mcq\/[^/]+\/?$/i.test(u.pathname)) {
               await queue.addRequest({
                 url: u.href,
-                uniqueKey: 'mcq:' + u.origin + u.pathname.replace(/\\/$/, ''),
+                uniqueKey: 'mcq:' + u.origin + u.pathname.replace(/\/$/, ''),
                 userData: { type: 'mcq' }
               });
             } else {
               await queue.addRequest({
                 url: u.href,
-                uniqueKey: 'discover:' + u.href.replace(/\\/$/, ''),
+                uniqueKey: 'discover:' + u.href.replace(/\/$/, ''),
                 userData: { type: 'discover' }
               });
             }
