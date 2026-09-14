@@ -69,7 +69,7 @@ const crawler = new PuppeteerCrawler({
     }
   },
   maxConcurrency: Number(INPUT.maxConcurrency ?? 1),
-  maxRequestsPerCrawl: Number(INPUT.maxRequests ?? 3000),
+  maxRequestsPerCrawl: Number(INPUT.maxRequests ?? 10000),
   navigationTimeoutSecs: 60,
   requestHandlerTimeoutSecs: 180,
   maxRequestRetries: 3,
@@ -400,17 +400,11 @@ const crawler = new PuppeteerCrawler({
 
       newQuestions.push(question);
 
-      await dataset.pushData({
-        quizUrl: quiz.quizUrl,
-        chapter: quiz.chapter,
-        questionCount: quiz.questionCount,
-        question: question.question,
-        options: question.options,
-        correctAnswer: question.correctAnswer,
-        solution: question.solution
-      });
     }
 
+    // One JSON dataset record per quiz: metadata + every NEW question with
+    // its full option list, correct answer and solution. Duplicate questions
+    // are excluded using the persistent SEEN_QUESTIONS store.
     if (newQuestions.length > 0) {
       await dataset.pushData({
         quizUrl: quiz.quizUrl,
