@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Actor } from 'apify';
-import { PlaywrightCrawler, RequestQueue, Dataset } from 'crawlee';
+import { PuppeteerCrawler, RequestQueue, Dataset } from 'crawlee';
 
 await Actor.init();
 
@@ -35,7 +35,7 @@ async function saveSeen() {
   await kv.setValue('SEEN_QUESTIONS', seen);
 }
 
-const crawler = new PlaywrightCrawler({
+const crawler = new PuppeteerCrawler({
   requestQueue: queue,
   maxConcurrency: Number(INPUT.maxConcurrency ?? 1),
   maxRequestsPerCrawl: Number(INPUT.maxRequests ?? 3000),
