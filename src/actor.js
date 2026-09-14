@@ -160,47 +160,24 @@ const crawler = new PuppeteerCrawler({
         log.info('MCQ answers prepared: ' + JSON.stringify(prepared));
 
 
-        // Match the browser-console behavior: search the rendered DOM for the
-        // exact visible "Submit Now" text, then invoke the element's native click.
-        // Do not restrict this to <button>; the site can use another clickable element.
-        const clickSubmitNowFromDom = await page.evaluate(() => {
-          const norm = el => (el?.innerText || el?.value || el?.textContent || '')
-            .replace(/\\s+/g, ' ').trim().toLowerCase();
-          const candidates = [...document.querySelectorAll(
-            'button, input, a, [role="button"], [onclick], [class*="submit" i], div, span'
-          )].filter(el => norm(el) === 'submit now');
-          const clickable = candidates.find(el => {
-            const s = getComputedStyle(el);
-            const r = el.getBoundingClientRect();
-            return s.display !== 'none' && s.visibility !== 'hidden' &&
-              r.width > 0 && r.height > 0;
-          }) || candidates[0];
-          if (!clickable) {
-            return {
-              clicked: false,
-              count: candidates.length,
-              bodyHasText: /submit\\s+now/i.test(document.body.innerText || '')
-            };
-          }
-          clickable.click();
-          return {
-            clicked: true,
-            tag: clickable.tagName,
-            id: clickable.id || '',
-            className: String(clickable.className || ''),
-            count: candidates.length
-          };
-        });
-        log.info('DOM Submit Now click: ' + JSON.stringify(clickSubmitNowFromDom));
+        // The MCQ UI requires the confirmation sequence:
+        // 1) click "Submit Test"
+        // 2) then click "Submit Now"
+        // Keep both clicks DOM-native because the site's handlers are attached
+        // to the rendered elements.
 
         async function clickVisibleByText(regex) {
-          const handles = await page.$('button, input[type="submit"], input[type="button"]');
+          const handles = await page.$$('button, input[type="submit"], input[type="button"], a, [role="button"]');
           for (const handle of handles) {
             const match = await handle.evaluate((el, source) => {
-              const text = (el.innerText || el.value || '').trim();
+              const text = (el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim();
               const r = el.getBoundingClientRect();
               const s = getComputedStyle(el);
-              return new RegExp(source, 'i').test(text) && s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+              return new RegExp(source, 'i').test(text) &&
+                s.display !== 'none' &&
+                s.visibility !== 'hidden' &&
+                r.width > 0 &&
+                r.height > 0;
             }, regex.source);
             if (match) {
               await handle.click();
@@ -210,94 +187,100 @@ const crawler = new PuppeteerCrawler({
           return false;
         }
 
-        let submitResult = { clicked: false, text: '', confirmation: false };
+        // Step 1: Submit Test
+        const submitTestBefore = await page.evaluate(() => ({
+          count: [...document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')]
+            .filter(el => /^submit\\s+test$/i.test((el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim()))
+            .length,
+          bodyHasText: /submit\\s+test/i.test(document.body.innerText || '')
+        }));
+        log.info('Submit Test candidates: ' + JSON.stringify(submitTestBefore));
 
-        if (clickSubmitNowFromDom.clicked) {
-          submitResult = { clicked: true, text: 'Submit Now', confirmation: true };
-        } else if (await clickVisibleByText(/^submit now$/i)) {
-          submitResult = { clicked: true, text: 'Submit Now', confirmation: true };
-        } else if (await clickVisibleByText(/^submit test$/i)) {
-          submitResult = { clicked: true, text: 'Submit Test', confirmation: false };
-        } else if (await clickVisibleByText(/^(finish|show answers|check answers|view result|see result|reveal)$/i)) {
-          submitResult = { clicked: true, text: 'generic submit', confirmation: false };
+        let submitTestClicked = await clickVisibleByText(/^submit\\s+test$/i);
+
+        if (!submitTestClicked) {
+          submitTestClicked = await page.evaluate(() => {
+            const norm = el => (el?.innerText || el?.value || el?.textContent || '')
+              .replace(/\\s+/g, ' ').trim();
+            const visible = el => {
+              if (!el) return false;
+              const s = getComputedStyle(el);
+              const r = el.getBoundingClientRect();
+              return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+            };
+            const el = [...document.querySelectorAll('button, input, a, [role="button"], [onclick], [class*="submit" i]')]
+              .find(x => visible(x) && /^submit\\s+test$/i.test(norm(x)));
+            if (!el) return false;
+            el.click();
+            return true;
+          });
         }
 
-        log.info('Submit action: ' + JSON.stringify(submitResult));
+        log.info('Submit Test click: ' + JSON.stringify({ clicked: submitTestClicked }));
 
-        if (submitResult.clicked) {
-          // The site's own Chrome-console behavior is driven by DOM click handlers.
-          // Use a native DOM click as a fallback/confirmation path, matching Chrome.
-          await new Promise(resolve => setTimeout(resolve, 1200));
-
-          if (submitResult.confirmation) {
-            const nativeSubmitTest = await page.evaluate(() => {
-              const visible = el => {
-                if (!el) return false;
-                const s = getComputedStyle(el);
-                const r = el.getBoundingClientRect();
-                return s.display !== 'none' && s.visibility !== 'hidden' &&
-                  r.width > 0 && r.height > 0;
-              };
-              const buttons = [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')];
-              const btn = buttons.find(el => visible(el) &&
-                /^submit test$/i.test((el.innerText || el.value || '').trim()));
-              if (!btn) return false;
-              btn.click();
-              return true;
-            });
-            log.info('Native Submit Test click: ' + JSON.stringify({ clicked: nativeSubmitTest }));
-          } else {
-            const nativeSubmit = await page.evaluate(() => {
-              const visible = el => {
-                if (!el) return false;
-                const s = getComputedStyle(el);
-                const r = el.getBoundingClientRect();
-                return s.display !== 'none' && s.visibility !== 'hidden' &&
-                  r.width > 0 && r.height > 0;
-              };
-              const buttons = [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')];
-              const btn = buttons.find(el => visible(el) &&
-                /^(submit test|finish|show answers|check answers|view result|see result|reveal)$/i.test(
-                  (el.innerText || el.value || '').trim()
-                ));
-              if (!btn) return false;
-              btn.click();
-              return true;
-            });
-            log.info('Native submit click: ' + JSON.stringify({ clicked: nativeSubmit }));
-          }
-
-          // The site updates the result DOM asynchronously after Submit Test.
-          // Chrome DevTools shows the final answers with label.correct and
-          // .solution-text, so poll the exact same DOM until the result is ready.
-          await new Promise(resolve => setTimeout(resolve, 3000));
-
-          const resultReady = await page.waitForFunction(
-            () => {
-              const blocks = document.querySelectorAll('.question-block');
-              if (!blocks.length) return false;
-
-              const correct = document.querySelectorAll('.question-block label.correct').length;
-              const solutions = document.querySelectorAll('.question-block .solution-text').length;
-
-              // Require at least one answer/solution marker rather than assuming
-              // the page is ready immediately after the click.
-              return correct > 0 || solutions > 0;
-            },
-            { timeout: 90000 }
-          ).then(() => true).catch(() => false);
-
-          const resultCounts = await page.evaluate(() => ({
-            correct: document.querySelectorAll('.question-block label.correct').length,
-            solutions: document.querySelectorAll('.question-block .solution-text').length
-          }));
-          log.info('MCQ result DOM ready: ' + JSON.stringify({ resultReady, ...resultCounts }));
-
-          // Give the page a final render cycle so classes/text inserted by
-          // JavaScript are visible to the same document.querySelector calls
-          // used successfully in Chrome DevTools.
-          await new Promise(resolve => setTimeout(resolve, 2000));
+        if (!submitTestClicked) {
+          throw new Error('Could not click Submit Test.');
         }
+
+        // Give the confirmation UI time to render. The site may replace/add
+        // the "Submit Now" control asynchronously after Submit Test.
+        await new Promise(resolve => setTimeout(resolve, 1200));
+
+        // Step 2: Submit Now
+        const submitNowBefore = await page.evaluate(() => ({
+          count: [...document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')]
+            .filter(el => /^submit\\s+now$/i.test((el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim()))
+            .length,
+          bodyHasText: /submit\\s+now/i.test(document.body.innerText || '')
+        }));
+        log.info('Submit Now candidates: ' + JSON.stringify(submitNowBefore));
+
+        let submitNowClicked = await clickVisibleByText(/^submit\\s+now$/i);
+
+        if (!submitNowClicked) {
+          submitNowClicked = await page.evaluate(() => {
+            const norm = el => (el?.innerText || el?.value || el?.textContent || '')
+              .replace(/\\s+/g, ' ').trim();
+            const visible = el => {
+              if (!el) return false;
+              const s = getComputedStyle(el);
+              const r = el.getBoundingClientRect();
+              return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+            };
+            const el = [...document.querySelectorAll('button, input, a, [role="button"], [onclick], [class*="submit" i]')]
+              .find(x => visible(x) && /^submit\\s+now$/i.test(norm(x)));
+            if (!el) return false;
+            el.click();
+            return true;
+          });
+        }
+
+        log.info('Submit Now click: ' + JSON.stringify({ clicked: submitNowClicked }));
+
+        if (!submitNowClicked) {
+          throw new Error('Could not click Submit Now after Submit Test.');
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        const resultReady = await page.waitForFunction(
+          () => {
+            const blocks = document.querySelectorAll('.question-block');
+            if (!blocks.length) return false;
+            const correct = document.querySelectorAll('.question-block label.correct').length;
+            const solutions = document.querySelectorAll('.question-block .solution-text').length;
+            return correct > 0 || solutions > 0;
+          },
+          { timeout: 90000 }
+        ).then(() => true).catch(() => false);
+
+        const resultCounts = await page.evaluate(() => ({
+          correct: document.querySelectorAll('.question-block label.correct').length,
+          solutions: document.querySelectorAll('.question-block .solution-text').length
+        }));
+        log.info('MCQ result DOM ready: ' + JSON.stringify({ resultReady, ...resultCounts }));
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     } else {
       const links = await page.$$eval('a[href]', els =>
