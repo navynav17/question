@@ -245,6 +245,61 @@ const crawler = new PuppeteerCrawler({
         }));
         log.info('MCQ result DOM ready: ' + JSON.stringify({ resultReady, ...resultCounts }));
 
+        // Push the completed MCQ result to the Apify Dataset as structured JSON.
+        // This is what makes the result visible under the run's Dataset/Output
+        // instead of only appearing in the actor log.
+        const output = await page.evaluate(() => {
+          const clean = value => (value || '').replace(/\\s+/g, ' ').trim();
+          const blocks = [...document.querySelectorAll('.question-block')];
+
+          const questions = blocks.map((block, index) => {
+            const selected = block.querySelector('input[type="radio"]:checked');
+            const selectedLabel = selected?.closest('label');
+            const correctLabel =
+              block.querySelector('label.correct') ||
+              block.querySelector('.correct-answer') ||
+              block.querySelector('[data-correct="true"]');
+
+            const questionEl =
+              block.querySelector('.question-text, .question, [class*="question-text"]') ||
+              block.querySelector('h1, h2, h3, h4, p');
+
+            const solutionEl =
+              block.querySelector('.solution-text, .solution, [class*="solution"]');
+
+            return {
+              number: index + 1,
+              question: clean(questionEl?.innerText || ''),
+              selectedAnswer: clean(selectedLabel?.innerText || selected?.value || ''),
+              correctAnswer: clean(correctLabel?.innerText || ''),
+              solution: clean(solutionEl?.innerText || '')
+            };
+          });
+
+          const correctCount = questions.filter(q =>
+            q.correctAnswer &&
+            q.selectedAnswer &&
+            q.selectedAnswer === q.correctAnswer
+          ).length;
+
+          return {
+            url: location.href,
+            title: document.title,
+            questionCount: questions.length,
+            correctCount,
+            solutionCount: questions.filter(q => q.solution).length,
+            questions
+          };
+        });
+
+        await dataset.pushData(output);
+        log.info('MCQ JSON output pushed to Apify Dataset: ' + JSON.stringify({
+          url: output.url,
+          questionCount: output.questionCount,
+          correctCount: output.correctCount,
+          solutionCount: output.solutionCount
+        }));
+
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     } else {
