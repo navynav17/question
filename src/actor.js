@@ -15,52 +15,103 @@ const startUrls = [...new Set(configuredUrls.length ? configuredUrls : [
   'https://pandeyramu.com.np/sitemap.xml'
 ])];
 
-const queue = await RequestQueue.open();
-const dataset = await Dataset.open();
-const kv = await Actor.openKeyValueStore();
+const discoveredMcq = new Map();
 
-const seen = (await kv.getValue('SEEN_QUESTIONS')) ?? {};
-const runOutput = {
-  scrapedAt: new Date().toISOString(),
-  quizCount: 0,
-  newQuestionCount: 0,
-  quizzes: []
-};
-
-function clean(value) {
-  return String(value ?? '').replace(/\s+/g, ' ').trim();
+function normalizeMcqUrl(raw) {
+  try {
+    const u = new URL(raw);
+    if (u.origin !== 'https://pandeyramu.com.np') return null;
+    if (!/^\\/mcq\\/[^/]+\\/?$/i.test(u.pathname)) return null;
+    return u.origin + u.pathname.replace(/\\/$/, '') + (u.search || '');
+  } catch {
+    return null;
+  }
 }
 
-function dedupeKey(value) {
-  return crypto.createHash('sha256')
-    .update(clean(value).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim())
-    .digest('hex');
-}
-
-async function saveState() {
-  await kv.setValue('SEEN_QUESTIONS', seen);
-  await Actor.setValue('OUTPUT', Buffer.from(JSON.stringify(runOutput, null, 2), 'utf8'), {
-    contentType: 'application/json'
-  });
-}
-
-for (const url of startUrls) {
-  const isMcq = (() => {
-    try {
-      const u = new URL(url);
-      return u.origin === 'https://pandeyramu.com.np' && /^\/mcq\/[^/]+\/?$/i.test(u.pathname);
-    } catch {
-      return false;
+async function discoverFromHtml(page, url, log) {
+  const links = await page.$$eval('a[href]', els => els.map(a => a.href).filter(Boolean));
+  let added = 0;
+  for (const href of links) {
+    const mcq = normalizeMcqUrl(href);
+    if (mcq && !discoveredMcq.has(mcq)) {
+      discoveredMcq.set(mcq, true);
+      added++;
     }
-  })();
-
-  await queue.addRequest({
-    url,
-    uniqueKey: (isMcq ? 'mcq:' : 'discover:') + url.replace(/\/$/, ''),
-    userData: { type: isMcq ? 'mcq' : 'discover' }
-  });
+  }
+  log.info('MCQ slug discovery page: ' + JSON.stringify({
+    page: url,
+    linksFound: links.length,
+    newMcqSlugs: added,
+    totalMcqSlugs: discoveredMcq.size
+  }));
 }
 
+async function discoverMcqSlugs(log) {
+  log.info('MCQ SLUG DISCOVERY START');
+
+  const browser = await (await import('puppeteer')).launch({
+    headless: true,
+    executablePath: process.env.APIFY_CHROME_EXECUTABLE_PATH || '/usr/bin/google-chrome',
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
+  const page = await browser.newPage();
+  const visited = new Set();
+  const pending = [...startUrls];
+
+  while (pending.length && visited.size < Number(INPUT.maxDiscoveryPages ?? 500)) {
+    const url = pending.shift();
+    if (!url || visited.has(url)) continue;
+    visited.add(url);
+
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+      if (/sitemap[^/]*\\.xml$/i.test(url)) {
+        const xml = await page.content();
+        for (const match of xml.matchAll(/<loc>\\s*(https?:\\/\\/[^<]+)\\s*<\\/loc>/gi)) {
+          const found = match[1].trim();
+          const mcq = normalizeMcqUrl(found);
+          if (mcq) discoveredMcq.set(mcq, true);
+          else if (new URL(found).origin === 'https://pandeyramu.com.np' &&
+                   !/\\.(?:jpg|jpeg|png|gif|webp|svg|css|js|pdf|zip)$/i.test(new URL(found).pathname)) {
+            if (visited.size + pending.length < Number(INPUT.maxDiscoveryPages ?? 500)) pending.push(found);
+          }
+        }
+      } else {
+        await discoverFromHtml(page, url, log);
+        const links = await page.$$eval('a[href]', els => els.map(a => a.href).filter(Boolean));
+        for (const href of links) {
+          try {
+            const u = new URL(href);
+            if (u.origin !== 'https://pandeyramu.com.np') continue;
+            if (normalizeMcqUrl(href)) continue;
+            if (u.pathname.includes('/wp-admin/') || u.pathname.includes('/feed/')) continue;
+            if (/\\.(?:jpg|jpeg|png|gif|webp|svg|css|js|xml|pdf|zip)$/i.test(u.pathname)) continue;
+            const normalized = u.origin + u.pathname.replace(/\\/$/, '') + (u.search || '');
+            if (!visited.has(normalized) && pending.length < Number(INPUT.maxDiscoveryPages ?? 500)) {
+              pending.push(normalized);
+            }
+          } catch {}
+        }
+      }
+    } catch (err) {
+      log.warning('Discovery failed: ' + JSON.stringify({ url, error: String(err?.message || err) }));
+    }
+  }
+
+  await browser.close();
+
+  const slugs = [...discoveredMcq.keys()].sort();
+  await kv.setValue('MCQ_SLUGS', slugs);
+  log.info('MCQ SLUG DISCOVERY COMPLETE: ' + JSON.stringify({
+    pagesVisited: visited.size,
+    mcqSlugs: slugs.length
+  }));
+  return slugs;
+}
+
+const discoveredSlugs = await discoverMcqSlugs(console);
 const crawler = new PuppeteerCrawler({
   requestQueue: queue,
   launchContext: {
