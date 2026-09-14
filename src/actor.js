@@ -301,12 +301,42 @@ const crawler = new PuppeteerCrawler({
               ''
             );
 
+            // Extract every answer option, not just the correct answer.
+            // Options are normally represented by labels wrapping radio/checkbox
+            // inputs. Keep the full option text and identify the correct one.
+            const options = [...block.querySelectorAll('label')]
+              .filter(label => label.querySelector('input[type="radio"], input[type="checkbox"]'))
+              .map((label, optionIndex) => {
+                const input = label.querySelector('input[type="radio"], input[type="checkbox"]');
+                const text = clean(
+                  label.querySelector('.option-text')?.innerText ||
+                  label.querySelector('.option-text')?.textContent ||
+                  label.innerText ||
+                  label.textContent ||
+                  input?.value ||
+                  ''
+                );
+                const isCorrect =
+                  label.classList.contains('correct') ||
+                  label.matches('.correct-answer') ||
+                  label.dataset.correct === 'true' ||
+                  input?.dataset.correct === 'true' ||
+                  label.querySelector('[data-correct="true"]') !== null;
+                return {
+                  number: optionIndex + 1,
+                  text,
+                  isCorrect
+                };
+              })
+              .filter(option => option.text);
+
             const question = clean(questionEl?.innerText || questionEl?.textContent || '');
             const solution = clean(solutionEl?.innerText || solutionEl?.textContent || '');
 
             return {
               number: index + 1,
               question,
+              options,
               correctAnswer,
               solution
             };
