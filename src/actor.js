@@ -235,19 +235,36 @@ const crawler = new PlaywrightCrawler({
             log.info('Native submit click: ' + JSON.stringify({ clicked: nativeSubmit }));
           }
 
-          await page.waitForTimeout(2500);
+          // The site updates the result DOM asynchronously after Submit Test.
+          // Chrome DevTools shows the final answers with label.correct and
+          // .solution-text, so poll the exact same DOM until the result is ready.
+          await page.waitForTimeout(3000);
 
-          await page.waitForFunction(
+          const resultReady = await page.waitForFunction(
             () => {
-              const blocks = document.querySelectorAll('.question-block').length;
+              const blocks = document.querySelectorAll('.question-block');
+              if (!blocks.length) return false;
+
               const correct = document.querySelectorAll('.question-block label.correct').length;
               const solutions = document.querySelectorAll('.question-block .solution-text').length;
-              return blocks > 0 && (correct >= blocks || solutions >= blocks);
-            },
-            { timeout: 60000 }
-          ).catch(() => {});
 
-          await page.waitForTimeout(1500);
+              // Require at least one answer/solution marker rather than assuming
+              // the page is ready immediately after the click.
+              return correct > 0 || solutions > 0;
+            },
+            { timeout: 90000 }
+          ).then(() => true).catch(() => false);
+
+          log.info('MCQ result DOM ready: ' + JSON.stringify({
+            resultReady,
+            correct: await page.locator('.question-block label.correct').count(),
+            solutions: await page.locator('.question-block .solution-text').count()
+          }));
+
+          // Give the page a final render cycle so classes/text inserted by
+          // JavaScript are visible to the same document.querySelector calls
+          // used successfully in Chrome DevTools.
+          await page.waitForTimeout(2000);
         }
 
         state = await page.evaluate(() => ({
