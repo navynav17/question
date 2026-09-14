@@ -16,13 +16,28 @@ const startUrls = [...new Set(configuredUrls.length ? configuredUrls : [
 ])];
 
 const discoveredMcq = new Map();
+const queue = await RequestQueue.open();
+const dataset = await Dataset.open();
+const kv = await Actor.openKeyValueStore();
+const seen = (await kv.getValue('SEEN_QUESTIONS')) ?? {};
+const runOutput = { quizCount: 0, newQuestionCount: 0, quizzes: [] };
+
+function dedupeKey(question) {
+  return crypto.createHash('sha256').update(String(question || '').replace(/\\s+/g, ' ').trim().toLowerCase()).digest('hex');
+}
+
+async function saveState() {
+  await kv.setValue('SEEN_QUESTIONS', seen);
+}
+
+
 
 function normalizeMcqUrl(raw) {
   try {
     const u = new URL(raw);
     if (u.origin !== 'https://pandeyramu.com.np') return null;
-    if (!/^\\/mcq\\/[^/]+\\/?$/i.test(u.pathname)) return null;
-    return u.origin + u.pathname.replace(/\\/$/, '') + (u.search || '');
+    if (!/^\/mcq\/[^/]+\/?$/i.test(u.pathname)) return null;
+    return u.origin + u.pathname.replace(/\/$/, '') + (u.search || '');
   } catch {
     return null;
   }
@@ -67,14 +82,14 @@ async function discoverMcqSlugs(log) {
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-      if (/sitemap[^/]*\\.xml$/i.test(url)) {
+      if (/sitemap[^/]*\.xml$/i.test(url)) {
         const xml = await page.content();
-        for (const match of xml.matchAll(/<loc>\\s*(https?:\\/\\/[^<]+)\\s*<\\/loc>/gi)) {
+        for (const match of xml.matchAll(/<loc>\s*(https?:\/\/[^<]+)\s*<\/loc>/gi)) {
           const found = match[1].trim();
           const mcq = normalizeMcqUrl(found);
           if (mcq) discoveredMcq.set(mcq, true);
           else if (new URL(found).origin === 'https://pandeyramu.com.np' &&
-                   !/\\.(?:jpg|jpeg|png|gif|webp|svg|css|js|pdf|zip)$/i.test(new URL(found).pathname)) {
+                   !/\.(?:jpg|jpeg|png|gif|webp|svg|css|js|pdf|zip)$/i.test(new URL(found).pathname)) {
             if (visited.size + pending.length < Number(INPUT.maxDiscoveryPages ?? 500)) pending.push(found);
           }
         }
@@ -87,8 +102,8 @@ async function discoverMcqSlugs(log) {
             if (u.origin !== 'https://pandeyramu.com.np') continue;
             if (normalizeMcqUrl(href)) continue;
             if (u.pathname.includes('/wp-admin/') || u.pathname.includes('/feed/')) continue;
-            if (/\\.(?:jpg|jpeg|png|gif|webp|svg|css|js|xml|pdf|zip)$/i.test(u.pathname)) continue;
-            const normalized = u.origin + u.pathname.replace(/\\/$/, '') + (u.search || '');
+            if (/\.(?:jpg|jpeg|png|gif|webp|svg|css|js|xml|pdf|zip)$/i.test(u.pathname)) continue;
+            const normalized = u.origin + u.pathname.replace(/\/$/, '') + (u.search || '');
             if (!visited.has(normalized) && pending.length < Number(INPUT.maxDiscoveryPages ?? 500)) {
               pending.push(normalized);
             }
