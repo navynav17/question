@@ -160,11 +160,12 @@ const crawler = new PuppeteerCrawler({
         log.info('MCQ answers prepared: ' + JSON.stringify(prepared));
 
 
-        // The MCQ UI requires the confirmation sequence:
-        // 1) click "Submit Test"
-        // 2) then click "Submit Now"
-        // Keep both clicks DOM-native because the site's handlers are attached
-        // to the rendered elements.
+        // The site exposes "Submit Now" on the question page. Clicking it opens
+        // the confirmation UI whose heading is "Submit Test" and whose final
+        // action is another "Submit Now". Therefore the real DOM sequence is:
+        // 1) click the page-level Submit Now (opens Submit Test confirmation)
+        // 2) wait for the Submit Test confirmation UI
+        // 3) click the confirmation Submit Now
 
         async function clickVisibleByText(regex) {
           const handles = await page.$$('button, input[type="submit"], input[type="button"], a, [role="button"]');
@@ -174,10 +175,8 @@ const crawler = new PuppeteerCrawler({
               const r = el.getBoundingClientRect();
               const s = getComputedStyle(el);
               return new RegExp(source, 'i').test(text) &&
-                s.display !== 'none' &&
-                s.visibility !== 'hidden' &&
-                r.width > 0 &&
-                r.height > 0;
+                s.display !== 'none' && s.visibility !== 'hidden' &&
+                r.width > 0 && r.height > 0;
             }, regex.source);
             if (match) {
               await handle.click();
@@ -187,78 +186,50 @@ const crawler = new PuppeteerCrawler({
           return false;
         }
 
-        // Step 1: Submit Test
-        const submitTestBefore = await page.evaluate(() => ({
+        // Step 1: click the page-level Submit Now. This opens the Submit Test
+        // confirmation dialog/modal on the live MCQ UI.
+        const submitNowInitial = await page.evaluate(() => ({
           count: [...document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')]
-            .filter(el => /^submit\\s+test$/i.test((el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim()))
-            .length,
-          bodyHasText: /submit\\s+test/i.test(document.body.innerText || '')
+            .filter(el => /^submit\\s+now$/i.test((el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim())).length
         }));
-        log.info('Submit Test candidates: ' + JSON.stringify(submitTestBefore));
+        log.info('Initial Submit Now candidates: ' + JSON.stringify(submitNowInitial));
 
-        let submitTestClicked = await clickVisibleByText(/^submit\\s+test$/i);
+        let initialSubmitClicked = await clickVisibleByText(/^submit\\s+now$/i);
+        log.info('Initial Submit Now click: ' + JSON.stringify({ clicked: initialSubmitClicked }));
 
-        if (!submitTestClicked) {
-          submitTestClicked = await page.evaluate(() => {
-            const norm = el => (el?.innerText || el?.value || el?.textContent || '')
-              .replace(/\\s+/g, ' ').trim();
-            const visible = el => {
-              if (!el) return false;
-              const s = getComputedStyle(el);
-              const r = el.getBoundingClientRect();
-              return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-            };
-            const el = [...document.querySelectorAll('button, input, a, [role="button"], [onclick], [class*="submit" i]')]
-              .find(x => visible(x) && /^submit\\s+test$/i.test(norm(x)));
-            if (!el) return false;
-            el.click();
-            return true;
-          });
+        if (!initialSubmitClicked) {
+          throw new Error('Could not click the page-level Submit Now to open Submit Test confirmation.');
         }
 
-        log.info('Submit Test click: ' + JSON.stringify({ clicked: submitTestClicked }));
+        // Wait for the confirmation UI. The exact markup may vary, so detect
+        // either visible Submit Test text or a newly rendered Submit Now.
+        await page.waitForFunction(() => {
+          const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
+          const visible = el => {
+            const s = getComputedStyle(el);
+            const r = el.getBoundingClientRect();
+            return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+          };
+          const body = clean(document.body.innerText || '');
+          const hasSubmitTest = /submit\\s+test/i.test(body);
+          const submitNowCount = [...document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')]
+            .filter(el => visible(el) && /^submit\\s+now$/i.test(clean(el.innerText || el.value || el.textContent))).length;
+          return hasSubmitTest || submitNowCount >= 1;
+        }, { timeout: 10000 }).catch(() => false);
 
-        if (!submitTestClicked) {
-          throw new Error('Could not click Submit Test.');
-        }
-
-        // Give the confirmation UI time to render. The site may replace/add
-        // the "Submit Now" control asynchronously after Submit Test.
-        await new Promise(resolve => setTimeout(resolve, 1200));
-
-        // Step 2: Submit Now
-        const submitNowBefore = await page.evaluate(() => ({
-          count: [...document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')]
-            .filter(el => /^submit\\s+now$/i.test((el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim()))
-            .length,
-          bodyHasText: /submit\\s+now/i.test(document.body.innerText || '')
+        const confirmation = await page.evaluate(() => ({
+          bodyHasSubmitTest: /submit\\s+test/i.test(document.body.innerText || ''),
+          submitNowCount: [...document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')]
+            .filter(el => /^submit\\s+now$/i.test((el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim())).length
         }));
-        log.info('Submit Now candidates: ' + JSON.stringify(submitNowBefore));
+        log.info('Submit Test confirmation UI: ' + JSON.stringify(confirmation));
 
-        let submitNowClicked = await clickVisibleByText(/^submit\\s+now$/i);
+        // Step 2: click the confirmation Submit Now.
+        const finalSubmitClicked = await clickVisibleByText(/^submit\\s+now$/i);
+        log.info('Confirmation Submit Now click: ' + JSON.stringify({ clicked: finalSubmitClicked }));
 
-        if (!submitNowClicked) {
-          submitNowClicked = await page.evaluate(() => {
-            const norm = el => (el?.innerText || el?.value || el?.textContent || '')
-              .replace(/\\s+/g, ' ').trim();
-            const visible = el => {
-              if (!el) return false;
-              const s = getComputedStyle(el);
-              const r = el.getBoundingClientRect();
-              return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-            };
-            const el = [...document.querySelectorAll('button, input, a, [role="button"], [onclick], [class*="submit" i]')]
-              .find(x => visible(x) && /^submit\\s+now$/i.test(norm(x)));
-            if (!el) return false;
-            el.click();
-            return true;
-          });
-        }
-
-        log.info('Submit Now click: ' + JSON.stringify({ clicked: submitNowClicked }));
-
-        if (!submitNowClicked) {
-          throw new Error('Could not click Submit Now after Submit Test.');
+        if (!finalSubmitClicked) {
+          throw new Error('Submit Test confirmation appeared, but its Submit Now action could not be clicked.');
         }
 
         await new Promise(resolve => setTimeout(resolve, 3000));
