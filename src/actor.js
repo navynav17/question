@@ -129,6 +129,30 @@ const crawler = new PlaywrightCrawler({
       if (state.questionBlocks > 0 && (state.correct === 0 || state.solutions === 0)) {
         const buttonTexts = await page.locator('button, input[type="submit"], input[type="button"]').allTextContents();
         log.info('Submit candidates: ' + JSON.stringify(buttonTexts.map(x => x.trim()).filter(Boolean)));
+        const prepared = await page.evaluate(() => {
+          const blocks = [...document.querySelectorAll('.question-block')];
+          let selected = 0;
+          for (const q of blocks) {
+            const input = q.querySelector('input[type="radio"]:checked') ||
+              q.querySelector('input[type="radio"]');
+            if (!input) continue;
+            if (!input.checked) {
+              const label = input.closest('label');
+              if (label) label.click();
+              else input.click();
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            if (input.checked) selected++;
+          }
+          return {
+            questionBlocks: blocks.length,
+            selected,
+            checked: document.querySelectorAll('.question-block input[type="radio"]:checked').length
+          };
+        });
+        log.info('MCQ answers prepared: ' + JSON.stringify(prepared));
+
 
         // Match the browser-console behavior: search the rendered DOM for the
         // exact visible "Submit Now" text, then invoke the element's native click.
