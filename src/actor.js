@@ -76,7 +76,7 @@ const crawler = new PuppeteerCrawler({
 
   async requestHandler({ page, request, log }) {
     if (request.userData?.type !== 'mcq') {
-      if (/\/sitemap\.xml$/i.test(request.url)) {
+      if (/sitemap[^/]*\.xml$/i.test(request.url)) {
         const urls = await page.evaluate(() => {
           const text = document.documentElement?.textContent || '';
           return [...text.matchAll(/<loc>\s*(https?:\/\/[^<]+)\s*<\/loc>/gi)]
