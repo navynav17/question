@@ -295,3 +295,32 @@ const crawler = new PuppeteerCrawler({
           // used successfully in Chrome DevTools.
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
+
+    } else {
+      const links = await page.$$eval('a[href]', els =>
+        els.map(a => a.href).filter(Boolean)
+      );
+      for (const url of links) {
+        try {
+          const u = new URL(url);
+          if (u.origin !== 'https://pandeyramu.com.np') continue;
+          if (/^\/mcq\/[^/]+\/?$/i.test(u.pathname)) {
+            await queue.addRequest({
+              url,
+              uniqueKey: 'mcq:' + url,
+              userData: { type: 'mcq' }
+            });
+          }
+        } catch {}
+      }
+    }
+  },
+
+  async failedRequestHandler({ request, log }) {
+    log.error('Request permanently failed: ' + request.url);
+  }
+});
+
+await crawler.run();
+await saveSeen();
+await Actor.exit();
