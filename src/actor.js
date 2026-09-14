@@ -276,40 +276,7 @@ const crawler = new PlaywrightCrawler({
       });
       log.info('MCQ answer DOM debug: ' + JSON.stringify(answerDebug));
 
-      const items = await page.evaluate((meta) => {
-        const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-
-        return [...document.querySelectorAll('.question-block')].map(q => {
-          const opts = {};
-          q.querySelectorAll('input[type="radio"]').forEach(input => {
-            const label = input.closest('label');
-            opts[input.value] = clean(label?.querySelector('.option-text')?.textContent);
-          });
-
-          const question = clean(q.querySelector('strong')?.textContent)
-            .replace(/^\d+\.\s*/, '');
-
-          return {
-            subject: meta.subject,
-            chapter: meta.chapter,
-            subchapter: meta.subchapter,
-            sourceUrl: location.href,
-            mcqUrl: location.href,
-            mcqSlug: meta.mcqSlug,
-            questionId: q.dataset.questionId || '',
-            number: Number(q.dataset.questionNumber || 0),
-            question,
-            A: opts.A || '',
-            B: opts.B || '',
-            C: opts.C || '',
-            D: opts.D || '',
-            answer: q.querySelector('label.correct input[type="radio"]')?.value || '',
-            explanation: clean(q.querySelector('.solution-text')?.textContent)
-          };
-        });
-      }, pageMeta);
-
-      let fresh = 0;
+      // This matches the extraction that works in Chrome DevTools after submission.      // The correct answer is exposed by the site's `label.correct` class and      // explanations by `.solution-text`.      const items = await page.evaluate((meta) => {        const clean = s => (s || '').replace(/\\s+/g, ' ').trim();        return [...document.querySelectorAll('.question-block')].map(q => {          const number = q.dataset.questionNumber;          const question = q.querySelector('strong')?.textContent.trim() || '';          const opts = {};          q.querySelectorAll('input[type="radio"]').forEach(input => {            const label = input.closest('label');            const text = label?.querySelector('.option-text')?.textContent.trim() || '';            opts[input.value] = text;          });          const correctInput = q.querySelector('label.correct input[type="radio"]');          const answer = correctInput?.value || '';          const explanation =            q.querySelector('.solution-text')?.textContent.trim() || '';          return {            subject: meta.subject,            chapter: meta.chapter,            subchapter: meta.subchapter,            sourceUrl: location.href,            mcqUrl: location.href,            mcqSlug: meta.mcqSlug,            questionId: q.dataset.questionId || '',            number: Number(number || 0),            question: question.replace(/^\\d+\\.\\s*/, ''),            A: opts.A || '',            B: opts.B || '',            C: opts.C || '',            D: opts.D || '',            answer,            explanation          };        });      }, pageMeta);      log.info('MCQ extracted: ' + JSON.stringify({        questions: items.length,        withQuestion: items.filter(x => x.question).length,        withAnswer: items.filter(x => x.answer).length,        withExplanation: items.filter(x => x.explanation).length      }));      let fresh = 0;
       let duplicate = 0;
       let incomplete = 0;
 
