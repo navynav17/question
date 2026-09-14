@@ -127,6 +127,33 @@ async function discoverMcqSlugs(log) {
 }
 
 const discoveredSlugs = await discoverMcqSlugs(console);
+
+// IMPORTANT: discovery and crawling are separate phases.
+// The 172 discovered slugs must be explicitly inserted into the SAME
+// RequestQueue that PuppeteerCrawler consumes.
+let queuedMcqSlugs = 0;
+for (const url of discoveredSlugs) {
+  const normalized = normalizeMcqUrl(url);
+  if (!normalized) continue;
+
+  const result = await queue.addRequest({
+    url: normalized,
+    uniqueKey: 'mcq:' + new URL(normalized).origin + new URL(normalized).pathname.replace(/\\/$/, ''),
+    userData: {
+      type: 'mcq',
+      slug: new URL(normalized).pathname.split('/').filter(Boolean).pop()
+    }
+  });
+
+  if (result.wasAlreadyPresent || result.wasAlreadyHandled) continue;
+  queuedMcqSlugs++;
+}
+
+console.log('MCQ SLUGS QUEUED: ' + JSON.stringify({
+  discovered: discoveredSlugs.length,
+  newlyQueued: queuedMcqSlugs
+}));
+
 const crawler = new PuppeteerCrawler({
   requestQueue: queue,
   launchContext: {
@@ -426,7 +453,7 @@ const crawler = new PuppeteerCrawler({
     const title = await page.$eval('h1', el => (el.innerText || el.textContent || '').trim())
       .catch(() => '');
 
-    const chapter = clean(title).replace(/\s+MCQ\s*$/i, '').trim() ||
+    const chapter = (title || '').replace(/\s+/g, ' ').trim().replace(/\s+MCQ\s*$/i, '').trim() ||
       new URL(request.url).pathname.split('/').filter(Boolean).pop()
         ?.replace(/[-_]+/g, ' ')
         .replace(/\b\w/g, c => c.toUpperCase()) || '';
