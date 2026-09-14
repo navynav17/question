@@ -111,6 +111,9 @@ const crawler = new PuppeteerCrawler({
       // every /mcq/<slug>/ URL. The request queue de-duplicates URLs.
       const links = await page.$eval('a[href]', els => els.map(a => a.href).filter(Boolean));
 
+      let mcqDiscovered = 0;
+      let internalDiscovered = 0;
+
       for (const href of links) {
         try {
           const u = new URL(href);
@@ -126,15 +129,24 @@ const crawler = new PuppeteerCrawler({
               uniqueKey: 'mcq:' + u.origin + u.pathname.replace(/\/$/, ''),
               userData: { type: 'mcq' }
             });
+            mcqDiscovered++;
           } else {
             await queue.addRequest({
               url: normalized,
               uniqueKey: 'discover:' + normalized,
               userData: { type: 'discover' }
             });
+            internalDiscovered++;
           }
         } catch {}
       }
+
+      log.info('MCQ discovery: ' + JSON.stringify({
+        page: request.url,
+        linksFound: links.length,
+        mcqDiscovered,
+        internalDiscovered
+      }));
       return;
     }
 
