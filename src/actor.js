@@ -87,7 +87,7 @@ const crawler = new PuppeteerCrawler({
           try {
             const u = new URL(url);
             if (u.origin !== 'https://pandeyramu.com.np') continue;
-            if (/^\\/mcq\\/[^/]+\\/?$/i.test(u.pathname)) {
+            if (/^\/mcq\/[^/]+\/?$/i.test(u.pathname)) {
               await queue.addRequest({
                 url: u.href,
                 uniqueKey: 'mcq:' + u.origin + u.pathname.replace(/\\/$/, ''),
