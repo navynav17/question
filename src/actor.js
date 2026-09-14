@@ -102,9 +102,9 @@ const crawler = new PuppeteerCrawler({
         log.info('MCQ start screen: ' + JSON.stringify(started));
         if (!started.clicked) throw new Error('Could not start MCQ test.');
 
-        await page.waitForTimeout(1500);
+        await new Promise(resolve => setTimeout(resolve, 1500));
         await page.waitForLoadState('networkidle').catch(() => {});
-        await page.waitForTimeout(1500);
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
 
       await page.waitForFunction(
@@ -224,7 +224,7 @@ const crawler = new PuppeteerCrawler({
         if (submitResult.clicked) {
           // The site's own Chrome-console behavior is driven by DOM click handlers.
           // Use a native DOM click as a fallback/confirmation path, matching Chrome.
-          await page.waitForTimeout(1200);
+          await new Promise(resolve => setTimeout(resolve, 1200));
 
           if (submitResult.confirmation) {
             const nativeSubmitTest = await page.evaluate(() => {
@@ -267,7 +267,7 @@ const crawler = new PuppeteerCrawler({
           // The site updates the result DOM asynchronously after Submit Test.
           // Chrome DevTools shows the final answers with label.correct and
           // .solution-text, so poll the exact same DOM until the result is ready.
-          await page.waitForTimeout(3000);
+          await new Promise(resolve => setTimeout(resolve, 3000));
 
           const resultReady = await page.waitForFunction(
             () => {
@@ -293,7 +293,7 @@ const crawler = new PuppeteerCrawler({
           // Give the page a final render cycle so classes/text inserted by
           // JavaScript are visible to the same document.querySelector calls
           // used successfully in Chrome DevTools.
-          await page.waitForTimeout(2000);
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
         state = await page.evaluate(() => ({
