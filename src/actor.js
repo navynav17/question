@@ -20,6 +20,7 @@ const dataset = await Dataset.open();
 const kv = await Actor.openKeyValueStore();
 const seen = (await kv.getValue('SEEN_QUESTIONS')) ?? {};
 const runOutput = { quizCount: 0, newQuestionCount: 0, quizzes: [] };
+const clean = value => (value || '').replace(/\s+/g, ' ').trim();
 
 function dedupeKey(question) {
   return crypto.createHash('sha256').update(String(question || '').replace(/\s+/g, ' ').trim().toLowerCase()).digest('hex');
