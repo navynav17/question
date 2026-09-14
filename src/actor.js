@@ -16,14 +16,13 @@ const startUrls = [...new Set(configuredUrls.length ? configuredUrls : [
 ])];
 
 const discoveredMcq = new Map();
-const queue = await RequestQueue.open();
 const dataset = await Dataset.open();
 const kv = await Actor.openKeyValueStore();
 const seen = (await kv.getValue('SEEN_QUESTIONS')) ?? {};
 const runOutput = { quizCount: 0, newQuestionCount: 0, quizzes: [] };
 
 function dedupeKey(question) {
-  return crypto.createHash('sha256').update(String(question || '').replace(/\\s+/g, ' ').trim().toLowerCase()).digest('hex');
+  return crypto.createHash('sha256').update(String(question || '').replace(/\s+/g, ' ').trim().toLowerCase()).digest('hex');
 }
 
 async function saveState() {
@@ -128,7 +127,10 @@ async function discoverMcqSlugs(log) {
 
 const discoveredSlugs = await discoverMcqSlugs(console);
 
-// IMPORTANT: discovery and crawling are separate phases.
+// IMPORTANT: discovery and crawling are separate phases. Use a fresh queue for
+// every actor run so URLs handled by an earlier run never block this run.
+const runId = Actor.getEnv()?.actorRunId || Date.now().toString();
+const queue = await RequestQueue.open({ name: `mcq-crawl-${runId}` });
 // The 172 discovered slugs must be explicitly inserted into the SAME
 // RequestQueue that PuppeteerCrawler consumes.
 let queuedMcqSlugs = 0;
@@ -138,7 +140,7 @@ for (const url of discoveredSlugs) {
 
   const result = await queue.addRequest({
     url: normalized,
-    uniqueKey: 'mcq:' + new URL(normalized).origin + new URL(normalized).pathname.replace(/\\/$/, ''),
+    uniqueKey: 'mcq:' + new URL(normalized).origin + new URL(normalized).pathname.replace(/\/$/, ''),
     userData: {
       type: 'mcq',
       slug: new URL(normalized).pathname.split('/').filter(Boolean).pop()
@@ -547,5 +549,5 @@ const crawler = new PuppeteerCrawler({
 
 await crawler.run();
 await saveState();
-await dataset.pushData(runOutput);
+await dataset.pushData({ type: 'run_summary', quizCount: runOutput.quizCount, newQuestionCount: runOutput.newQuestionCount });
 await Actor.exit();
