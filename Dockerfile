@@ -1,4 +1,4 @@
-FROM apify/actor-node-playwright-chrome:latest
+FROM apify/actor-node-puppeteer-chrome:24
 
 COPY package*.json ./
 RUN npm install --omit=dev
