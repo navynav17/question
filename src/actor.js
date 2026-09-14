@@ -322,8 +322,9 @@ const crawler = new PuppeteerCrawler({
 
         // Save the complete object as Apify's default OUTPUT record so it appears
         // directly under the run's Key-value store / Output as JSON.
-        await Actor.setValue('OUTPUT', output, { contentType: 'application/json' });
-        await kv.setValue('OUTPUT', output, { contentType: 'application/json' });
+        const outputJson = JSON.stringify(output);
+        await Actor.setValue('OUTPUT', outputJson, { contentType: 'application/json' });
+        await kv.setValue('OUTPUT', outputJson, { contentType: 'application/json' });
         const savedOutput = await kv.getValue('OUTPUT');
         log.info('MCQ JSON OUTPUT saved: ' + JSON.stringify({ saved: !!savedOutput, questionCount: savedOutput?.questionCount, firstQuestionFields: savedOutput?.questions?.[0] ? Object.keys(savedOutput.questions[0]) : [] }));
 
