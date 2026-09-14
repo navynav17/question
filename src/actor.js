@@ -39,7 +39,7 @@ function dedupeKey(value) {
 
 async function saveState() {
   await kv.setValue('SEEN_QUESTIONS', seen);
-  await Actor.setValue('OUTPUT', JSON.stringify(runOutput), {
+  await Actor.setValue('OUTPUT', Buffer.from(JSON.stringify(runOutput, null, 2), 'utf8'), {
     contentType: 'application/json'
   });
 }
@@ -434,4 +434,5 @@ const crawler = new PuppeteerCrawler({
 
 await crawler.run();
 await saveState();
+await dataset.pushData(runOutput);
 await Actor.exit();
