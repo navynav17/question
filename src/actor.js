@@ -132,7 +132,7 @@ const crawler = new PuppeteerCrawler({
       }));
 
       if (state.questionBlocks > 0 && (state.correct === 0 || state.solutions === 0)) {
-        const buttonTexts = await page.$eval('button, input[type="submit"], input[type="button"]', els => els.map(el => el.textContent.trim()));
+        const buttonTexts = await page.$eval('button, input[type="submit"], input[type="button"]', els => els.map(el => (el.innerText || el.value || '').trim()));
         log.info('Submit candidates: ' + JSON.stringify(buttonTexts.map(x => x.trim()).filter(Boolean)));
         const prepared = await page.evaluate(() => {
           const blocks = [...document.querySelectorAll('.question-block')];
@@ -189,15 +189,20 @@ const crawler = new PuppeteerCrawler({
         });
         log.info('DOM Submit Now click: ' + JSON.stringify(clickSubmitNowFromDom));
 
-        const submitNow = page.getByRole('button', { name: /^submit now$/i });
-        const submitTest = page.getByRole('button', { name: /^submit test$/i });
+        const submitNow = page.$('button').then(els => els);
+        const submitTest = page.$('button').then(els => els);
 
-        async function clickVisible(locator, timeout = 10000) {
-          const count = await locator.count();
-          for (let i = 0; i < count; i++) {
-            const candidate = locator.nth(i);
-            if (await candidate.isVisible().catch(() => false)) {
-              await candidate.click({ timeout });
+        async function clickVisibleByText(regex) {
+          const handles = await page.$('button, input[type="submit"], input[type="button"]');
+          for (const handle of handles) {
+            const match = await handle.evaluate((el, source) => {
+              const text = (el.innerText || el.value || '').trim();
+              const r = el.getBoundingClientRect();
+              const s = getComputedStyle(el);
+              return new RegExp(source, 'i').test(text) && s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+            }, regex.source);
+            if (match) {
+              await handle.click();
               return true;
             }
           }
@@ -208,15 +213,12 @@ const crawler = new PuppeteerCrawler({
 
         if (clickSubmitNowFromDom.clicked) {
           submitResult = { clicked: true, text: 'Submit Now', confirmation: true };
-        } else if (await clickVisible(submitNow)) {
+        } else if (await clickVisibleByText(/^submit now$/i)) {
           submitResult = { clicked: true, text: 'Submit Now', confirmation: true };
-        } else if (await clickVisible(submitTest)) {
+        } else if (await clickVisibleByText(/^submit test$/i)) {
           submitResult = { clicked: true, text: 'Submit Test', confirmation: false };
-        } else {
-          const generic = page.getByRole('button', { name: /^(finish|show answers|check answers|view result|see result|reveal)$/i });
-          if (await clickVisible(generic)) {
-            submitResult = { clicked: true, text: 'generic submit', confirmation: false };
-          }
+        } else if (await clickVisibleByText(/^(finish|show answers|check answers|view result|see result|reveal)$/i)) {
+          submitResult = { clicked: true, text: 'generic submit', confirmation: false };
         }
 
         log.info('Submit action: ' + JSON.stringify(submitResult));
@@ -284,11 +286,11 @@ const crawler = new PuppeteerCrawler({
             { timeout: 90000 }
           ).then(() => true).catch(() => false);
 
-          log.info('MCQ result DOM ready: ' + JSON.stringify({
-            resultReady,
-            correct: await page.locator('.question-block label.correct').count(),
-            solutions: await page.locator('.question-block .solution-text').count()
+          const resultCounts = await page.evaluate(() => ({
+            correct: document.querySelectorAll('.question-block label.correct').length,
+            solutions: document.querySelectorAll('.question-block .solution-text').length
           }));
+          log.info('MCQ result DOM ready: ' + JSON.stringify({ resultReady, ...resultCounts }));
 
           // Give the page a final render cycle so classes/text inserted by
           // JavaScript are visible to the same document.querySelector calls
