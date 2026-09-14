@@ -130,7 +130,7 @@ const discoveredSlugs = await discoverMcqSlugs(console);
 // IMPORTANT: discovery and crawling are separate phases. Use a fresh queue for
 // every actor run so URLs handled by an earlier run never block this run.
 const runId = Actor.getEnv()?.actorRunId || Date.now().toString();
-const queue = await RequestQueue.open({ name: `mcq-crawl-${runId}` });
+const queue = await RequestQueue.open(`mcq-crawl-${runId}`);
 // The 172 discovered slugs must be explicitly inserted into the SAME
 // RequestQueue that PuppeteerCrawler consumes.
 let queuedMcqSlugs = 0;
