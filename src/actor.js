@@ -189,8 +189,8 @@ const crawler = new PuppeteerCrawler({
         });
         log.info('DOM Submit Now click: ' + JSON.stringify(clickSubmitNowFromDom));
 
-        const submitNow = page.$('button').then(els => els);
-        const submitTest = page.$('button').then(els => els);
+        const submitNow = page.$('button');
+        const submitTest = page.$('button');
 
         async function clickVisibleByText(regex) {
           const handles = await page.$('button, input[type="submit"], input[type="button"]');
