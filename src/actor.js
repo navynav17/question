@@ -388,15 +388,6 @@ const crawler = new PuppeteerCrawler({
 
     // Persist only genuinely new questions. This survives actor restarts/runs.
     const newQuestions = [];
-    if (newQuestions.length > 0) {
-      await dataset.pushData({
-        quizUrl: quiz.quizUrl,
-        chapter: quiz.chapter,
-        questionCount: quiz.questionCount,
-        newQuestionCount: newQuestions.length,
-        questions: newQuestions
-      });
-    }
 
     for (const question of questions) {
       const key = dedupeKey(question.question);
@@ -417,6 +408,16 @@ const crawler = new PuppeteerCrawler({
         options: question.options,
         correctAnswer: question.correctAnswer,
         solution: question.solution
+      });
+    }
+
+    if (newQuestions.length > 0) {
+      await dataset.pushData({
+        quizUrl: quiz.quizUrl,
+        chapter: quiz.chapter,
+        questionCount: quiz.questionCount,
+        newQuestionCount: newQuestions.length,
+        questions: newQuestions
       });
     }
 
