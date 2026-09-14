@@ -11,7 +11,8 @@ const configuredUrls = (INPUT.startUrls ?? [])
 
 const startUrls = [...new Set(configuredUrls.length ? configuredUrls : [
   'https://pandeyramu.com.np/',
-  'https://pandeyramu.com.np/all-subjects/'
+  'https://pandeyramu.com.np/all-subjects/',
+  'https://pandeyramu.com.np/sitemap.xml'
 ])];
 
 const queue = await RequestQueue.open();
@@ -75,23 +76,57 @@ const crawler = new PuppeteerCrawler({
 
   async requestHandler({ page, request, log }) {
     if (request.userData?.type !== 'mcq') {
-      // Discovery cycle: traverse internal pages and continuously harvest /mcq/<slug>/ URLs.
-      const links = await page.$$eval('a[href]', els => els.map(a => a.href).filter(Boolean));
+      if (/\/sitemap\.xml$/i.test(request.url)) {
+        const urls = await page.evaluate(() => {
+          const text = document.documentElement?.innerText || document.documentElement?.textContent || '';
+          return [...text.matchAll(/<loc>\\s*(https?:\\/\\/[^<]+)\\s*<\\/loc>/gi)]
+            .map(m => m[1].trim());
+        }).catch(() => []);
+
+        for (const url of urls) {
+          try {
+            const u = new URL(url);
+            if (u.origin !== 'https://pandeyramu.com.np') continue;
+            if (/^\\/mcq\\/[^/]+\\/?$/i.test(u.pathname)) {
+              await queue.addRequest({
+                url: u.href,
+                uniqueKey: 'mcq:' + u.origin + u.pathname.replace(/\\/$/, ''),
+                userData: { type: 'mcq' }
+              });
+            } else {
+              await queue.addRequest({
+                url: u.href,
+                uniqueKey: 'discover:' + u.href.replace(/\\/$/, ''),
+                userData: { type: 'discover' }
+              });
+            }
+          } catch {}
+        }
+
+        log.info('Sitemap discovery: ' + JSON.stringify({ urlsFound: urls.length }));
+        return;
+      }
+
+      // Discovery cycle: traverse all internal HTML pages and continuously harvest
+      // every /mcq/<slug>/ URL. The request queue de-duplicates URLs.
+      const links = await page.$eval('a[href]', els => els.map(a => a.href).filter(Boolean));
 
       for (const href of links) {
         try {
           const u = new URL(href);
           if (u.origin !== 'https://pandeyramu.com.np') continue;
+          if (u.pathname.includes('/wp-admin/') || u.pathname.includes('/feed/')) continue;
+          if (/\.(?:jpg|jpeg|png|gif|webp|svg|css|js|xml|pdf|zip)$/i.test(u.pathname)) continue;
 
           const normalized = u.origin + u.pathname.replace(/\/$/, '') + (u.search || '');
+
           if (/^\/mcq\/[^/]+\/?$/i.test(u.pathname)) {
             await queue.addRequest({
               url: normalized,
               uniqueKey: 'mcq:' + u.origin + u.pathname.replace(/\/$/, ''),
               userData: { type: 'mcq' }
             });
-          } else if (/^\/(?:all-subjects|subject|chapter|subchapter)\//i.test(u.pathname) ||
-                     u.pathname === '/' || u.pathname === '/all-subjects/') {
+          } else {
             await queue.addRequest({
               url: normalized,
               uniqueKey: 'discover:' + normalized,
