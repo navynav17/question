@@ -9,38 +9,63 @@ const configuredUrls = (INPUT.startUrls ?? [])
   .map(x => typeof x === 'string' ? x : x?.url)
   .filter(Boolean);
 
-const startUrls = [...new Set(configuredUrls.length ? configuredUrls : ['https://pandeyramu.com.np/'])];
+const startUrls = [...new Set(configuredUrls.length ? configuredUrls : [
+  'https://pandeyramu.com.np/',
+  'https://pandeyramu.com.np/all-subjects/'
+])];
 
 const queue = await RequestQueue.open();
 const dataset = await Dataset.open();
 const kv = await Actor.openKeyValueStore();
+
 const seen = (await kv.getValue('SEEN_QUESTIONS')) ?? {};
+const runOutput = {
+  scrapedAt: new Date().toISOString(),
+  quizCount: 0,
+  newQuestionCount: 0,
+  quizzes: []
+};
+
+function clean(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function dedupeKey(value) {
+  return crypto.createHash('sha256')
+    .update(clean(value).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim())
+    .digest('hex');
+}
+
+async function saveState() {
+  await kv.setValue('SEEN_QUESTIONS', seen);
+  await Actor.setValue('OUTPUT', JSON.stringify(runOutput), {
+    contentType: 'application/json'
+  });
+}
 
 for (const url of startUrls) {
   const isMcq = (() => {
     try {
       const u = new URL(url);
       return u.origin === 'https://pandeyramu.com.np' && /^\/mcq\/[^/]+\/?$/i.test(u.pathname);
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   })();
 
   await queue.addRequest({
     url,
-    uniqueKey: (isMcq ? 'mcq:' : 'seed:') + url,
+    uniqueKey: (isMcq ? 'mcq:' : 'discover:') + url.replace(/\/$/, ''),
     userData: { type: isMcq ? 'mcq' : 'discover' }
   });
-}
-
-async function saveSeen() {
-  await kv.setValue('SEEN_QUESTIONS', seen);
 }
 
 const crawler = new PuppeteerCrawler({
   requestQueue: queue,
   launchContext: {
     launchOptions: {
-      executablePath: process.env.APIFY_CHROME_EXECUTABLE_PATH || '/usr/bin/google-chrome',
-    },
+      executablePath: process.env.APIFY_CHROME_EXECUTABLE_PATH || '/usr/bin/google-chrome'
+    }
   },
   maxConcurrency: Number(INPUT.maxConcurrency ?? 1),
   maxRequestsPerCrawl: Number(INPUT.maxRequests ?? 3000),
@@ -49,343 +74,322 @@ const crawler = new PuppeteerCrawler({
   maxRequestRetries: 3,
 
   async requestHandler({ page, request, log }) {
-    if (request.userData?.type === 'mcq') {
-      const username = String(INPUT.username ?? '').trim() || 'Abcdefgh';
+    if (request.userData?.type !== 'mcq') {
+      // Discovery cycle: traverse internal pages and continuously harvest /mcq/<slug>/ URLs.
+      const links = await page.$$eval('a[href]', els => els.map(a => a.href).filter(Boolean));
 
-      const started = await page.evaluate((username) => {
-        const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-        const visible = el => {
-          if (!el) return false;
-          const s = getComputedStyle(el);
-          const r = el.getBoundingClientRect();
-          return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-        };
-
-        const text = clean(document.body.innerText);
-        const nameInput = [...document.querySelectorAll(
-          'input[type="text"], input:not([type]), input[name*="name" i], input[id*="name" i], input[placeholder*="name" i]'
-        )].find(visible);
-
-        const startButton = [...document.querySelectorAll(
-          'button, input[type="submit"], input[type="button"]'
-        )].find(el => visible(el) && /start\s+mcq\s+test/i.test(clean(el.innerText || el.value)));
-
-        if (!/enter your name to begin the test/i.test(text) && !startButton) {
-          return { startScreen: false, filled: false, clicked: false };
-        }
-
-        if (nameInput) {
-          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-          if (setter) setter.call(nameInput, username);
-          else nameInput.value = username;
-          nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-          nameInput.dispatchEvent(new Event('change', { bubbles: true }));
-          nameInput.dispatchEvent(new Event('blur', { bubbles: true }));
-        }
-
-        if (startButton) {
-          startButton.click();
-          return { startScreen: true, filled: !!nameInput, clicked: true, username };
-        }
-
-        const form = nameInput?.closest('form');
-        if (form) {
-          if (typeof form.requestSubmit === 'function') form.requestSubmit();
-          else form.submit();
-          return { startScreen: true, filled: true, clicked: true, username };
-        }
-
-        return { startScreen: true, filled: !!nameInput, clicked: false, username };
-      }, username);
-
-      if (started.startScreen) {
-        log.info('MCQ start screen: ' + JSON.stringify(started));
-        if (!started.clicked) throw new Error('Could not start MCQ test.');
-
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
-
-      await page.waitForFunction(
-        () => document.querySelectorAll('.question-block').length > 0,
-        { timeout: 30000 }
-      );
-
-      const initial = await page.evaluate(() => ({
-        url: location.href,
-        questionBlocks: document.querySelectorAll('.question-block').length,
-        forms: document.querySelectorAll('form').length,
-        buttons: [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
-          .map(x => (x.innerText || x.value || x.getAttribute('aria-label') || '').trim())
-          .filter(Boolean)
-      }));
-
-      log.info('MCQ page ' + request.url + ': forms=' + initial.forms +
-        ', buttons=' + JSON.stringify(initial.buttons) +
-        ', questionBlocks=' + initial.questionBlocks);
-
-      let state = await page.evaluate(() => ({
-        questionBlocks: document.querySelectorAll('.question-block').length,
-        correct: document.querySelectorAll('.question-block label.correct').length,
-        solutions: document.querySelectorAll('.question-block .solution-text').length
-      }));
-
-      if (state.questionBlocks > 0 && (state.correct === 0 || state.solutions === 0)) {
-        const buttonTexts = await page.evaluate(() => [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
-          .map(el => (el.innerText || el.value || '').trim()));
-        log.info('Submit candidates: ' + JSON.stringify(buttonTexts.filter(Boolean)));
-        const prepared = await page.evaluate(() => {
-          const blocks = [...document.querySelectorAll('.question-block')];
-          let selected = 0;
-          for (const q of blocks) {
-            const input = q.querySelector('input[type="radio"]:checked') ||
-              q.querySelector('input[type="radio"]');
-            if (!input) continue;
-            if (!input.checked) {
-              const label = input.closest('label');
-              if (label) label.click();
-              else input.click();
-              input.dispatchEvent(new Event('input', { bubbles: true }));
-              input.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-            if (input.checked) selected++;
-          }
-          return {
-            questionBlocks: blocks.length,
-            selected,
-            checked: document.querySelectorAll('.question-block input[type="radio"]:checked').length
-          };
-        });
-        log.info('MCQ answers prepared: ' + JSON.stringify(prepared));
-
-
-        // The site exposes "Submit Now" on the question page. Clicking it opens
-        // the confirmation UI whose heading is "Submit Test" and whose final
-        // action is another "Submit Now". Therefore the real DOM sequence is:
-        // 1) click the page-level Submit Now (opens Submit Test confirmation)
-        // 2) wait for the Submit Test confirmation UI
-        // 3) click the confirmation Submit Now
-
-        // The page-level #submit-now-btn has its own JavaScript click listener.
-        // That listener calls window.confirm() and then quizForm.requestSubmit().
-        // Puppeteer must explicitly accept the browser dialog; otherwise the
-        // click appears to do nothing and the form is never submitted.
-        let submitDialogSeen = false;
-        const submitDialogHandler = async (dialog) => {
-          submitDialogSeen = true;
-          log.info('Submit confirmation dialog: ' + JSON.stringify({
-            type: dialog.type(),
-            message: dialog.message()
-          }));
-          await dialog.accept();
-        };
-        page.on('dialog', submitDialogHandler);
-
-        // Click ONLY the page-level Submit Now button. Do not search for or
-        // click a second "Submit Now" after this; the site's event handler
-        // performs the actual quizForm.requestSubmit() after confirmation.
-        const submitNowInitial = await page.evaluate(() => {
-          const el = document.querySelector('#submit-now-btn');
-          if (!el) return { count: 0, visible: false };
-          const r = el.getBoundingClientRect();
-          const s = getComputedStyle(el);
-          return {
-            count: 1,
-            visible: s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0,
-            disabled: !!el.disabled,
-            text: (el.innerText || '').replace(/\\s+/g, ' ').trim()
-          };
-        });
-        log.info('Submit Now button: ' + JSON.stringify(submitNowInitial));
-
-        if (!submitNowInitial.count || submitNowInitial.disabled) {
-          page.off('dialog', submitDialogHandler);
-          throw new Error('Could not use #submit-now-btn.');
-        }
-
-        // The site's own click listener is attached directly to #submit-now-btn.
-        // Invoke that listener through the DOM click API. This deliberately
-        // does not require Puppeteer's visibility check; the button may be
-        // present in the DOM while CSS reports it as hidden.
-        const initialSubmitClicked = await page.evaluate(() => {
-          const el = document.querySelector('#submit-now-btn');
-          if (!el || el.disabled) return false;
-          el.click();
-          return true;
-        });
-        log.info('Submit Now click: ' + JSON.stringify({ clicked: initialSubmitClicked }));
-
-        // The click handler is synchronous up to requestSubmit(), but allow the
-        // resulting submit/navigation/DOM update to settle before inspecting it.
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        page.off('dialog', submitDialogHandler);
-        log.info('Submit Now result: ' + JSON.stringify({ dialogAccepted: submitDialogSeen }));
-
-        if (!initialSubmitClicked) {
-          throw new Error('Could not click the page-level Submit Now.');
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 3000));
-
-        const resultReady = await page.waitForFunction(
-          () => {
-            const blocks = document.querySelectorAll('.question-block');
-            if (!blocks.length) return false;
-            const correct = document.querySelectorAll('.question-block label.correct').length;
-            const solutions = document.querySelectorAll('.question-block .solution-text').length;
-            return correct > 0 || solutions > 0;
-          },
-          { timeout: 90000 }
-        ).then(() => true).catch(() => false);
-
-        const resultCounts = await page.evaluate(() => ({
-          correct: document.querySelectorAll('.question-block label.correct').length,
-          solutions: document.querySelectorAll('.question-block .solution-text').length
-        }));
-        log.info('MCQ result DOM ready: ' + JSON.stringify({ resultReady, ...resultCounts }));
-
-        // Push the completed MCQ result to the Apify Dataset as the final JSON artifact.
-        // Required schema:
-        // { quizUrl, chapter, questionCount, questions: [{ question, correctAnswer, solution }] }
-        const output = await page.evaluate(() => {
-          const clean = value => (value || '').replace(/\\s+/g, ' ').trim();
-          const blocks = [...document.querySelectorAll('.question-block')];
-
-          const firstText = selectors => {
-            for (const selector of selectors) {
-              const el = document.querySelector(selector);
-              const value = clean(el?.innerText || el?.textContent || '');
-              if (value) return value;
-            }
-            return '';
-          };
-
-          const slugToTitle = slug => slug
-            .replace(/[-_]+/g, ' ')
-            .replace(/\\b\\w/g, c => c.toUpperCase())
-            .trim();
-
-          const chapter = firstText([
-            '.breadcrumb a:last-child',
-            '.breadcrumbs a:last-child',
-            '.breadcrumb li:last-child',
-            '.breadcrumbs li:last-child',
-            '.entry-title',
-            'article h1',
-            'main h1',
-            'h1'
-          ]) || slugToTitle(new URL(location.href).pathname.split('/').filter(Boolean).pop() || '');
-
-          const questions = blocks.map((block, index) => {
-            const correctLabel =
-              block.querySelector('label.correct') ||
-              block.querySelector('.correct-answer') ||
-              block.querySelector('[data-correct="true"]');
-
-            const questionEl =
-              block.querySelector('.question-text') ||
-              block.querySelector('.question') ||
-              block.querySelector('[class*="question-text"]') ||
-              block.querySelector('h1, h2, h3, h4, p');
-
-            const solutionEl =
-              block.querySelector('.solution-text') ||
-              block.querySelector('.solution') ||
-              block.querySelector('[class*="solution"]');
-
-            const correctAnswer = clean(
-              correctLabel?.innerText ||
-              correctLabel?.textContent ||
-              correctLabel?.querySelector('input')?.value ||
-              ''
-            );
-
-            // Extract every answer option, not just the correct answer.
-            // Options are normally represented by labels wrapping radio/checkbox
-            // inputs. Keep the full option text and identify the correct one.
-            const options = [...block.querySelectorAll('label')]
-              .filter(label => label.querySelector('input[type="radio"], input[type="checkbox"]'))
-              .map((label, optionIndex) => {
-                const input = label.querySelector('input[type="radio"], input[type="checkbox"]');
-                const text = clean(
-                  label.querySelector('.option-text')?.innerText ||
-                  label.querySelector('.option-text')?.textContent ||
-                  label.innerText ||
-                  label.textContent ||
-                  input?.value ||
-                  ''
-                );
-                const isCorrect =
-                  label.classList.contains('correct') ||
-                  label.matches('.correct-answer') ||
-                  label.dataset.correct === 'true' ||
-                  input?.dataset.correct === 'true' ||
-                  label.querySelector('[data-correct="true"]') !== null;
-                return {
-                  number: optionIndex + 1,
-                  text,
-                  isCorrect
-                };
-              })
-              .filter(option => option.text);
-
-            const question = clean(questionEl?.innerText || questionEl?.textContent || '');
-            const solution = clean(solutionEl?.innerText || solutionEl?.textContent || '');
-
-            return {
-              number: index + 1,
-              question,
-              options,
-              correctAnswer,
-              solution
-            };
-          });
-
-          return {
-            quizUrl: location.href,
-            chapter,
-            questionCount: questions.length,
-            questions
-          };
-        });
-
-        // Save the complete object as Apify's default OUTPUT record so it appears
-        // directly under the run's Key-value store / Output as JSON.
-        const outputJson = JSON.stringify(output);
-        await Actor.setValue('OUTPUT', outputJson, { contentType: 'application/json' });
-        await kv.setValue('OUTPUT', outputJson, { contentType: 'application/json' });
-        const savedOutput = await kv.getValue('OUTPUT');
-        log.info('MCQ JSON OUTPUT saved: ' + JSON.stringify({ saved: !!savedOutput, questionCount: savedOutput?.questionCount, firstQuestionFields: savedOutput?.questions?.[0] ? Object.keys(savedOutput.questions[0]) : [] }));
-
-        // Also keep a Dataset record for tabular/export access.
-        await dataset.pushData(output);
-        log.info('MCQ JSON output pushed to Apify Dataset: ' + JSON.stringify({
-          quizUrl: output.quizUrl,
-          chapter: output.chapter,
-          questionCount: output.questionCount
-        }));
-
-
-      }
-    } else {
-      const links = await page.$$eval('a[href]', els =>
-        els.map(a => a.href).filter(Boolean)
-      );
-      for (const url of links) {
+      for (const href of links) {
         try {
-          const u = new URL(url);
+          const u = new URL(href);
           if (u.origin !== 'https://pandeyramu.com.np') continue;
+
+          const normalized = u.origin + u.pathname.replace(/\/$/, '') + (u.search || '');
           if (/^\/mcq\/[^/]+\/?$/i.test(u.pathname)) {
             await queue.addRequest({
-              url,
-              uniqueKey: 'mcq:' + url,
+              url: normalized,
+              uniqueKey: 'mcq:' + u.origin + u.pathname.replace(/\/$/, ''),
               userData: { type: 'mcq' }
+            });
+          } else if (/^\/(?:all-subjects|subject|chapter|subchapter)\//i.test(u.pathname) ||
+                     u.pathname === '/' || u.pathname === '/all-subjects/') {
+            await queue.addRequest({
+              url: normalized,
+              uniqueKey: 'discover:' + normalized,
+              userData: { type: 'discover' }
             });
           }
         } catch {}
       }
+      return;
     }
+
+    const username = String(INPUT.username ?? '').trim() || 'Abcdefgh';
+
+    const started = await page.evaluate((username) => {
+      const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+      const visible = el => {
+        if (!el) return false;
+        const s = getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+      };
+
+      const text = clean(document.body.innerText);
+      const nameInput = [...document.querySelectorAll(
+        'input[type="text"], input:not([type]), input[name*="name" i], input[id*="name" i], input[placeholder*="name" i]'
+      )].find(visible);
+
+      const startButton = [...document.querySelectorAll(
+        'button, input[type="submit"], input[type="button"]'
+      )].find(el => visible(el) && /start\s+mcq\s+test/i.test(clean(el.innerText || el.value)));
+
+      if (!/enter your name to begin the test/i.test(text) && !startButton) {
+        return { startScreen: false, filled: false, clicked: false };
+      }
+
+      if (nameInput) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(nameInput, username);
+        else nameInput.value = username;
+        nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+        nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+        nameInput.dispatchEvent(new Event('blur', { bubbles: true }));
+      }
+
+      if (startButton) {
+        startButton.click();
+        return { startScreen: true, filled: !!nameInput, clicked: true, username };
+      }
+
+      const form = nameInput?.closest('form');
+      if (form) {
+        form.requestSubmit ? form.requestSubmit() : form.submit();
+        return { startScreen: true, filled: true, clicked: true, username };
+      }
+
+      return { startScreen: true, filled: !!nameInput, clicked: false, username };
+    }, username);
+
+    if (started.startScreen) {
+      log.info('MCQ start screen: ' + JSON.stringify(started));
+      if (!started.clicked) throw new Error('Could not start MCQ test.');
+      await new Promise(resolve => setTimeout(resolve, 4500));
+    }
+
+    await page.waitForFunction(
+      () => document.querySelectorAll('.question-block').length > 0,
+      { timeout: 30000 }
+    );
+
+    const preSubmitQuestions = await page.evaluate(() => {
+      const clean = value => (value || '').replace(/\s+/g, ' ').trim();
+
+      return [...document.querySelectorAll('.question-block')].map((block, index) => {
+        const questionEl =
+          block.querySelector('.question-text') ||
+          block.querySelector('.question') ||
+          block.querySelector('[class*="question-text"]') ||
+          block.querySelector('h1, h2, h3, h4, p');
+
+        const nodes = [
+          ...block.querySelectorAll(
+            'label, .option, .answer-option, [class*="option"], [class*="choice"]'
+          )
+        ];
+
+        const options = [];
+        const seenOptions = new Set();
+
+        for (const node of nodes) {
+          const input = node.querySelector?.('input[type="radio"], input[type="checkbox"]');
+          const text = clean(
+            node.querySelector?.('.option-text')?.innerText ||
+            node.querySelector?.('.option-text')?.textContent ||
+            node.innerText ||
+            node.textContent ||
+            input?.value ||
+            ''
+          );
+
+          if (!text || seenOptions.has(text)) continue;
+          seenOptions.add(text);
+          options.push({ number: options.length + 1, text });
+        }
+
+        return {
+          number: index + 1,
+          question: clean(questionEl?.innerText || questionEl?.textContent || ''),
+          options
+        };
+      });
+    });
+
+    log.info('MCQ questions/options captured: ' + JSON.stringify({
+      questionCount: preSubmitQuestions.length,
+      optionCounts: preSubmitQuestions.map(q => q.options.length)
+    }));
+
+    // Select one answer per question so the site's review/result state is generated.
+    await page.evaluate(() => {
+      for (const block of document.querySelectorAll('.question-block')) {
+        const input = block.querySelector('input[type="radio"]:checked') ||
+          block.querySelector('input[type="radio"]');
+        if (!input) continue;
+        if (!input.checked) {
+          const label = input.closest('label');
+          if (label) label.click();
+          else input.click();
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+    });
+
+    let dialogAccepted = false;
+    const dialogHandler = async dialog => {
+      if (/submit this quiz now/i.test(dialog.message())) {
+        dialogAccepted = true;
+        log.info('Submit confirmation dialog: ' + JSON.stringify({
+          type: dialog.type(),
+          message: dialog.message()
+        }));
+        await dialog.accept();
+      } else {
+        await dialog.dismiss();
+      }
+    };
+    page.on('dialog', dialogHandler);
+
+    // IMPORTANT: only click the page-level Submit Now. Its own JS listener
+    // calls window.confirm() and then quizForm.requestSubmit().
+    const clicked = await page.evaluate(() => {
+      const el = document.querySelector('#submit-now-btn');
+      if (!el || el.disabled) return false;
+      el.click();
+      return true;
+    });
+
+    log.info('Submit Now click: ' + JSON.stringify({ clicked }));
+
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    page.off('dialog', dialogHandler);
+
+    if (!clicked || !dialogAccepted) {
+      throw new Error('Submit Now was not completed.');
+    }
+
+    const resultReady = await page.waitForFunction(
+      () => {
+        const blocks = document.querySelectorAll('.question-block');
+        return blocks.length > 0 &&
+          (document.querySelectorAll('.question-block label.correct').length > 0 ||
+           document.querySelectorAll('.question-block .solution-text').length > 0 ||
+           document.querySelectorAll('.question-block .solution').length > 0);
+      },
+      { timeout: 90000 }
+    ).then(() => true).catch(() => false);
+
+    log.info('MCQ result DOM ready: ' + JSON.stringify({
+      resultReady,
+      correct: document.querySelectorAll('.question-block label.correct').length,
+      solutions: document.querySelectorAll('.question-block .solution-text, .question-block .solution').length
+    }));
+
+    const postSubmit = await page.evaluate(() => {
+      const clean = value => (value || '').replace(/\s+/g, ' ').trim();
+      const blocks = [...document.querySelectorAll('.question-block')];
+
+      return blocks.map((block, index) => {
+        const correctEl =
+          block.querySelector('label.correct') ||
+          block.querySelector('.correct-answer') ||
+          block.querySelector('[data-correct="true"]') ||
+          block.querySelector('.correct');
+
+        const solutionEl =
+          block.querySelector('.solution-text') ||
+          block.querySelector('.solution') ||
+          block.querySelector('[class*="solution"]');
+
+        let correctAnswer = clean(correctEl?.innerText || correctEl?.textContent || '');
+
+        if (!correctAnswer) {
+          const body = clean(block.innerText || block.textContent || '');
+          const match = body.match(/(?:correct\s+answer|answer)\s*[:\-]\s*([^\n]+)/i);
+          if (match) correctAnswer = clean(match[1]);
+        }
+
+        return {
+          number: index + 1,
+          correctAnswer,
+          solution: clean(solutionEl?.innerText || solutionEl?.textContent || '')
+        };
+      });
+    });
+
+    const title = await page.$eval('h1', el => (el.innerText || el.textContent || '').trim())
+      .catch(() => '');
+
+    const chapter = clean(title).replace(/\s+MCQ\s*$/i, '').trim() ||
+      new URL(request.url).pathname.split('/').filter(Boolean).pop()
+        ?.replace(/[-_]+/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase()) || '';
+
+    const questions = preSubmitQuestions.map((before, index) => {
+      const after = postSubmit[index] || {};
+      const normalizedCorrect = clean(after.correctAnswer).toLowerCase();
+
+      const options = before.options.map(option => {
+        const normalizedOption = option.text.toLowerCase();
+        const letter = String.fromCharCode(65 + option.number - 1).toLowerCase();
+
+        const isCorrect =
+          normalizedCorrect === normalizedOption ||
+          normalizedCorrect.startsWith(letter + '.') ||
+          normalizedCorrect.startsWith(letter + ')') ||
+          normalizedCorrect.startsWith(letter + ' ');
+
+        return { ...option, isCorrect };
+      });
+
+      return {
+        number: before.number,
+        question: before.question,
+        options,
+        correctAnswer: after.correctAnswer || '',
+        solution: after.solution || ''
+      };
+    });
+
+    const quiz = {
+      quizUrl: page.url(),
+      chapter,
+      questionCount: questions.length,
+      questions
+    };
+
+    // Persist only genuinely new questions. This survives actor restarts/runs.
+    const newQuestions = [];
+    for (const question of questions) {
+      const key = dedupeKey(question.question);
+      if (seen[key]) continue;
+
+      seen[key] = {
+        firstSeenQuizUrl: quiz.quizUrl,
+        firstSeenAt: new Date().toISOString()
+      };
+
+      newQuestions.push(question);
+
+      await dataset.pushData({
+        quizUrl: quiz.quizUrl,
+        chapter: quiz.chapter,
+        questionCount: quiz.questionCount,
+        question: question.question,
+        options: question.options,
+        correctAnswer: question.correctAnswer,
+        solution: question.solution
+      });
+    }
+
+    runOutput.quizCount += 1;
+    runOutput.newQuestionCount += newQuestions.length;
+    runOutput.quizzes.push({
+      quizUrl: quiz.quizUrl,
+      chapter: quiz.chapter,
+      questionCount: quiz.questionCount,
+      newQuestionCount: newQuestions.length,
+      questions: newQuestions
+    });
+
+    await saveState();
+
+    log.info('MCQ JSON saved: ' + JSON.stringify({
+      quizUrl: quiz.quizUrl,
+      chapter: quiz.chapter,
+      questionCount: quiz.questionCount,
+      newQuestionCount: newQuestions.length
+    }));
   },
 
   async failedRequestHandler({ request, log }) {
@@ -394,5 +398,5 @@ const crawler = new PuppeteerCrawler({
 });
 
 await crawler.run();
-await saveSeen();
+await saveState();
 await Actor.exit();
