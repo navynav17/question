@@ -79,7 +79,7 @@ const crawler = new PuppeteerCrawler({
       if (/\/sitemap\.xml$/i.test(request.url)) {
         const urls = await page.evaluate(() => {
           const text = document.documentElement?.innerText || document.documentElement?.textContent || '';
-          return [...text.matchAll(/<loc>\\s*(https?:\\/\\/[^<]+)\\s*<\\/loc>/gi)]
+          return [...text.matchAll(/<loc>\s*(https?:\/\/[^<]+)\s*<\/loc>/gi)]
             .map(m => m[1].trim());
         }).catch(() => []);
 
