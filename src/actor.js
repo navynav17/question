@@ -103,7 +103,7 @@ const crawler = new PuppeteerCrawler({
         if (!started.clicked) throw new Error('Could not start MCQ test.');
 
         await new Promise(resolve => setTimeout(resolve, 1500));
-        await page.waitForLoadState('networkidle').catch(() => {});
+        await new Promise(resolve => setTimeout(resolve, 1500));
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
 
@@ -132,7 +132,7 @@ const crawler = new PuppeteerCrawler({
       }));
 
       if (state.questionBlocks > 0 && (state.correct === 0 || state.solutions === 0)) {
-        const buttonTexts = await page.locator('button, input[type="submit"], input[type="button"]').allTextContents();
+        const buttonTexts = await page.$eval('button, input[type="submit"], input[type="button"]', els => els.map(el => el.textContent.trim()));
         log.info('Submit candidates: ' + JSON.stringify(buttonTexts.map(x => x.trim()).filter(Boolean)));
         const prepared = await page.evaluate(() => {
           const blocks = [...document.querySelectorAll('.question-block')];
