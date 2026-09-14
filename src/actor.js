@@ -295,7 +295,7 @@ const crawler = new PuppeteerCrawler({
           // used successfully in Chrome DevTools.
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
-
+      }
     } else {
       const links = await page.$$eval('a[href]', els =>
         els.map(a => a.href).filter(Boolean)
