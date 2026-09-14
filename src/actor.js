@@ -199,21 +199,21 @@ const crawler = new PuppeteerCrawler({
         });
         log.info('Submit Now button: ' + JSON.stringify(submitNowInitial));
 
-        if (!submitNowInitial.count || !submitNowInitial.visible) {
+        if (!submitNowInitial.count || submitNowInitial.disabled) {
           page.off('dialog', submitDialogHandler);
-          throw new Error('Could not find visible #submit-now-btn.');
+          throw new Error('Could not use #submit-now-btn.');
         }
 
+        // The site's own click listener is attached directly to #submit-now-btn.
+        // Invoke that listener through the DOM click API. This deliberately
+        // does not require Puppeteer's visibility check; the button may be
+        // present in the DOM while CSS reports it as hidden.
         const initialSubmitClicked = await page.evaluate(() => {
           const el = document.querySelector('#submit-now-btn');
-          if (!el) return false;
-          el.scrollIntoView({ block: 'center', inline: 'center' });
+          if (!el || el.disabled) return false;
+          el.click();
           return true;
         });
-
-        if (initialSubmitClicked) {
-          await page.locator('#submit-now-btn').click();
-        }
         log.info('Submit Now click: ' + JSON.stringify({ clicked: initialSubmitClicked }));
 
         // The click handler is synchronous up to requestSubmit(), but allow the
