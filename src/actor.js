@@ -245,62 +245,7 @@ const crawler = new PuppeteerCrawler({
         }));
         log.info('MCQ result DOM ready: ' + JSON.stringify({ resultReady, ...resultCounts }));
 
-        // Push the completed MCQ result to the Apify Dataset as structured JSON.
-        // This is what makes the result visible under the run's Dataset/Output
-        // instead of only appearing in the actor log.
-        const output = await page.evaluate(() => {
-          const clean = value => (value || '').replace(/\\s+/g, ' ').trim();
-          const blocks = [...document.querySelectorAll('.question-block')];
-
-          const questions = blocks.map((block, index) => {
-            const selected = block.querySelector('input[type="radio"]:checked');
-            const selectedLabel = selected?.closest('label');
-            const correctLabel =
-              block.querySelector('label.correct') ||
-              block.querySelector('.correct-answer') ||
-              block.querySelector('[data-correct="true"]');
-
-            const questionEl =
-              block.querySelector('.question-text, .question, [class*="question-text"]') ||
-              block.querySelector('h1, h2, h3, h4, p');
-
-            const solutionEl =
-              block.querySelector('.solution-text, .solution, [class*="solution"]');
-
-            return {
-              number: index + 1,
-              question: clean(questionEl?.innerText || ''),
-              selectedAnswer: clean(selectedLabel?.innerText || selected?.value || ''),
-              correctAnswer: clean(correctLabel?.innerText || ''),
-              solution: clean(solutionEl?.innerText || '')
-            };
-          });
-
-          const correctCount = questions.filter(q =>
-            q.correctAnswer &&
-            q.selectedAnswer &&
-            q.selectedAnswer === q.correctAnswer
-          ).length;
-
-          return {
-            url: location.href,
-            title: document.title,
-            questionCount: questions.length,
-            correctCount,
-            solutionCount: questions.filter(q => q.solution).length,
-            questions
-          };
-        });
-
-        await dataset.pushData(output);
-        log.info('MCQ JSON output pushed to Apify Dataset: ' + JSON.stringify({
-          url: output.url,
-          questionCount: output.questionCount,
-          correctCount: output.correctCount,
-          solutionCount: output.solutionCount
-        }));
-
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Push the completed MCQ result to the Apify Dataset as the final JSON artifact.\n        // Required schema:\n        // { quizUrl, chapter, questionCount, questions: [{ question, correctAnswer, solution }] }\n        const output = await page.evaluate(() => {\n          const clean = value => (value || '').replace(/\\s+/g, ' ').trim();\n          const blocks = [...document.querySelectorAll('.question-block')];\n\n          const firstText = selectors => {\n            for (const selector of selectors) {\n              const el = document.querySelector(selector);\n              const value = clean(el?.innerText || el?.textContent || '');\n              if (value) return value;\n            }\n            return '';\n          };\n\n          const slugToTitle = slug => slug\n            .replace(/[-_]+/g, ' ')\n            .replace(/\\b\\w/g, c => c.toUpperCase())\n            .trim();\n\n          const chapter = firstText([\n            '.breadcrumb a:last-child',\n            '.breadcrumbs a:last-child',\n            '.breadcrumb li:last-child',\n            '.breadcrumbs li:last-child',\n            '.entry-title',\n            'article h1',\n            'main h1',\n            'h1'\n          ]) || slugToTitle(new URL(location.href).pathname.split('/').filter(Boolean).pop() || '');\n\n          const questions = blocks.map((block, index) => {\n            const correctLabel =\n              block.querySelector('label.correct') ||\n              block.querySelector('.correct-answer') ||\n              block.querySelector('[data-correct="true"]');\n\n            const questionEl =\n              block.querySelector('.question-text') ||\n              block.querySelector('.question') ||\n              block.querySelector('[class*="question-text"]') ||\n              block.querySelector('h1, h2, h3, h4, p');\n\n            const solutionEl =\n              block.querySelector('.solution-text') ||\n              block.querySelector('.solution') ||\n              block.querySelector('[class*="solution"]');\n\n            const correctAnswer = clean(\n              correctLabel?.innerText ||\n              correctLabel?.textContent ||\n              correctLabel?.querySelector('input')?.value ||\n              ''\n            );\n\n            const question = clean(questionEl?.innerText || questionEl?.textContent || '');\n            const solution = clean(solutionEl?.innerText || solutionEl?.textContent || '');\n\n            return {\n              number: index + 1,\n              question,\n              correctAnswer,\n              solution\n            };\n          });\n\n          return {\n            quizUrl: location.href,\n            chapter,\n            questionCount: questions.length,\n            questions\n          };\n        });\n\n        await dataset.pushData(output);\n        log.info('MCQ JSON output pushed to Apify Dataset: ' + JSON.stringify({\n          quizUrl: output.quizUrl,\n          chapter: output.chapter,\n          questionCount: output.questionCount\n        }));\n\n
       }
     } else {
       const links = await page.$$eval('a[href]', els =>
