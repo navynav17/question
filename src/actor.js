@@ -78,7 +78,7 @@ const crawler = new PuppeteerCrawler({
     if (request.userData?.type !== 'mcq') {
       if (/\/sitemap\.xml$/i.test(request.url)) {
         const urls = await page.evaluate(() => {
-          const text = document.documentElement?.innerText || document.documentElement?.textContent || '';
+          const text = document.documentElement?.textContent || '';
           return [...text.matchAll(/<loc>\s*(https?:\/\/[^<]+)\s*<\/loc>/gi)]
             .map(m => m[1].trim());
         }).catch(() => []);
@@ -304,10 +304,13 @@ const crawler = new PuppeteerCrawler({
       { timeout: 90000 }
     ).then(() => true).catch(() => false);
 
-    log.info('MCQ result DOM ready: ' + JSON.stringify({
-      resultReady,
+    const resultStats = await page.evaluate(() => ({
       correct: document.querySelectorAll('.question-block label.correct').length,
       solutions: document.querySelectorAll('.question-block .solution-text, .question-block .solution').length
+    }));
+    log.info('MCQ result DOM ready: ' + JSON.stringify({
+      resultReady,
+      ...resultStats
     }));
 
     const postSubmit = await page.evaluate(() => {
@@ -385,6 +388,16 @@ const crawler = new PuppeteerCrawler({
 
     // Persist only genuinely new questions. This survives actor restarts/runs.
     const newQuestions = [];
+    if (newQuestions.length > 0) {
+      await dataset.pushData({
+        quizUrl: quiz.quizUrl,
+        chapter: quiz.chapter,
+        questionCount: quiz.questionCount,
+        newQuestionCount: newQuestions.length,
+        questions: newQuestions
+      });
+    }
+
     for (const question of questions) {
       const key = dedupeKey(question.question);
       if (seen[key]) continue;
