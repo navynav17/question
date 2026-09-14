@@ -130,9 +130,36 @@ const crawler = new PlaywrightCrawler({
         const buttonTexts = await page.locator('button, input[type="submit"], input[type="button"]').allTextContents();
         log.info('Submit candidates: ' + JSON.stringify(buttonTexts.map(x => x.trim()).filter(Boolean)));
 
-        // The site may render "Submit Now" as a non-button element.
-        // Prefer the actual visible text control before falling back to ARIA role lookup.
-        const nativeSubmitNow = page.locator('text=/^\\s*Submit Now\\s*$/i');
+        // Match the browser-console behavior: search the rendered DOM for the
+        // exact visible "Submit Now" text, then invoke the element's native click.
+        // Do not restrict this to <button>; the site can use another clickable element.
+        const clickSubmitNowFromDom = await page.evaluate(() => {
+          const visible = el => {
+            if (!el) return false;
+            const s = getComputedStyle(el);
+            const r = el.getBoundingClientRect();
+            return s.display !== 'none' && s.visibility !== 'hidden' &&
+              s.opacity !== '0' && r.width > 0 && r.height > 0;
+          };
+          const candidates = [...document.querySelectorAll('button, input, a, [role="button"], [onclick], div, span')]
+            .filter(el => visible(el) &&
+              (el.innerText || el.value || '').trim().toLowerCase() === 'submit now');
+          const el = candidates.find(x => {
+            const p = x.parentElement;
+            return !p || !visible(p) || (p.innerText || '').trim().toLowerCase() !== 'submit now';
+          }) || candidates[0];
+          if (!el) return { clicked: false, count: candidates.length };
+          el.click();
+          return {
+            clicked: true,
+            tag: el.tagName,
+            id: el.id || '',
+            className: String(el.className || ''),
+            count: candidates.length
+          };
+        });
+        log.info('DOM Submit Now click: ' + JSON.stringify(clickSubmitNowFromDom));
+
         const submitNow = page.getByRole('button', { name: /^submit now$/i });
         const submitTest = page.getByRole('button', { name: /^submit test$/i });
 
@@ -150,20 +177,9 @@ const crawler = new PlaywrightCrawler({
 
         let submitResult = { clicked: false, text: '', confirmation: false };
 
-        // Submit Now is the real visible control; Submit Test is normally
-        // a confirmation action that may exist hidden in the DOM.
-        let clickedSubmitNow = false;
-        const nativeSubmitNowCount = await nativeSubmitNow.count();
-        for (let i = 0; i < nativeSubmitNowCount; i++) {
-          const candidate = nativeSubmitNow.nth(i);
-          if (await candidate.isVisible().catch(() => false)) {
-            await candidate.click({ timeout: 10000 }).catch(() => {});
-            clickedSubmitNow = true;
-            break;
-          }
-        }
-
-        if (clickedSubmitNow || await clickVisible(submitNow)) {
+        if (clickSubmitNowFromDom.clicked) {
+          submitResult = { clicked: true, text: 'Submit Now', confirmation: true };
+        } else if (await clickVisible(submitNow)) {
           submitResult = { clicked: true, text: 'Submit Now', confirmation: true };
         } else if (await clickVisible(submitTest)) {
           submitResult = { clicked: true, text: 'Submit Test', confirmation: false };
