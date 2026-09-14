@@ -171,7 +171,7 @@ const crawler = new PuppeteerCrawler({
           const handles = await page.$$('button, input[type="submit"], input[type="button"], a, [role="button"]');
           for (const handle of handles) {
             const match = await handle.evaluate((el, source) => {
-              const text = (el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim();
+              const text = (el.innerText || el.value || el.textContent || '').replace(/\s+/g, ' ').trim();
               const r = el.getBoundingClientRect();
               const s = getComputedStyle(el);
               return new RegExp(source, 'i').test(text) &&
@@ -190,11 +190,11 @@ const crawler = new PuppeteerCrawler({
         // confirmation dialog/modal on the live MCQ UI.
         const submitNowInitial = await page.evaluate(() => ({
           count: [...document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')]
-            .filter(el => /^submit\\s+now$/i.test((el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim())).length
+            .filter(el => /^submit\s+now$/i.test((el.innerText || el.value || el.textContent || '').replace(/\s+/g, ' ').trim())).length
         }));
         log.info('Initial Submit Now candidates: ' + JSON.stringify(submitNowInitial));
 
-        let initialSubmitClicked = await clickVisibleByText(/^submit\\s+now$/i);
+        let initialSubmitClicked = await clickVisibleByText(/^submit\s+now$/i);
         log.info('Initial Submit Now click: ' + JSON.stringify({ clicked: initialSubmitClicked }));
 
         if (!initialSubmitClicked) {
@@ -204,28 +204,28 @@ const crawler = new PuppeteerCrawler({
         // Wait for the confirmation UI. The exact markup may vary, so detect
         // either visible Submit Test text or a newly rendered Submit Now.
         await page.waitForFunction(() => {
-          const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
+          const clean = s => (s || '').replace(/\s+/g, ' ').trim();
           const visible = el => {
             const s = getComputedStyle(el);
             const r = el.getBoundingClientRect();
             return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
           };
           const body = clean(document.body.innerText || '');
-          const hasSubmitTest = /submit\\s+test/i.test(body);
+          const hasSubmitTest = /submit\s+test/i.test(body);
           const submitNowCount = [...document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')]
-            .filter(el => visible(el) && /^submit\\s+now$/i.test(clean(el.innerText || el.value || el.textContent))).length;
+            .filter(el => visible(el) && /^submit\s+now$/i.test(clean(el.innerText || el.value || el.textContent))).length;
           return hasSubmitTest || submitNowCount >= 1;
         }, { timeout: 10000 }).catch(() => false);
 
         const confirmation = await page.evaluate(() => ({
-          bodyHasSubmitTest: /submit\\s+test/i.test(document.body.innerText || ''),
+          bodyHasSubmitTest: /submit\s+test/i.test(document.body.innerText || ''),
           submitNowCount: [...document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')]
-            .filter(el => /^submit\\s+now$/i.test((el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim())).length
+            .filter(el => /^submit\s+now$/i.test((el.innerText || el.value || el.textContent || '').replace(/\s+/g, ' ').trim())).length
         }));
         log.info('Submit Test confirmation UI: ' + JSON.stringify(confirmation));
 
         // Step 2: click the confirmation Submit Now.
-        const finalSubmitClicked = await clickVisibleByText(/^submit\\s+now$/i);
+        const finalSubmitClicked = await clickVisibleByText(/^submit\s+now$/i);
         log.info('Confirmation Submit Now click: ' + JSON.stringify({ clicked: finalSubmitClicked }));
 
         if (!finalSubmitClicked) {
