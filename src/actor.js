@@ -163,16 +163,49 @@ const crawler = new PlaywrightCrawler({
         log.info('Submit action: ' + JSON.stringify(submitResult));
 
         if (submitResult.clicked) {
-          await page.waitForTimeout(1500);
+          // The site's own Chrome-console behavior is driven by DOM click handlers.
+          // Use a native DOM click as a fallback/confirmation path, matching Chrome.
+          await page.waitForTimeout(1200);
 
           if (submitResult.confirmation) {
-            await page.waitForTimeout(500);
-            const confirmedButton = page.getByRole('button', { name: /^submit test$/i });
-            const confirmed = await clickVisible(confirmedButton, 10000);
-            log.info('Submit confirmation: ' + JSON.stringify({ clicked: confirmed }));
+            const nativeSubmitTest = await page.evaluate(() => {
+              const visible = el => {
+                if (!el) return false;
+                const s = getComputedStyle(el);
+                const r = el.getBoundingClientRect();
+                return s.display !== 'none' && s.visibility !== 'hidden' &&
+                  r.width > 0 && r.height > 0;
+              };
+              const buttons = [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')];
+              const btn = buttons.find(el => visible(el) &&
+                /^submit test$/i.test((el.innerText || el.value || '').trim()));
+              if (!btn) return false;
+              btn.click();
+              return true;
+            });
+            log.info('Native Submit Test click: ' + JSON.stringify({ clicked: nativeSubmitTest }));
+          } else {
+            const nativeSubmit = await page.evaluate(() => {
+              const visible = el => {
+                if (!el) return false;
+                const s = getComputedStyle(el);
+                const r = el.getBoundingClientRect();
+                return s.display !== 'none' && s.visibility !== 'hidden' &&
+                  r.width > 0 && r.height > 0;
+              };
+              const buttons = [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')];
+              const btn = buttons.find(el => visible(el) &&
+                /^(submit test|finish|show answers|check answers|view result|see result|reveal)$/i.test(
+                  (el.innerText || el.value || '').trim()
+                ));
+              if (!btn) return false;
+              btn.click();
+              return true;
+            });
+            log.info('Native submit click: ' + JSON.stringify({ clicked: nativeSubmit }));
           }
 
-          await page.waitForTimeout(2000);
+          await page.waitForTimeout(2500);
 
           await page.waitForFunction(
             () => {
