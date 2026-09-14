@@ -164,27 +164,30 @@ const crawler = new PuppeteerCrawler({
         // exact visible "Submit Now" text, then invoke the element's native click.
         // Do not restrict this to <button>; the site can use another clickable element.
         const clickSubmitNowFromDom = await page.evaluate(() => {
-          const visible = el => {
-            if (!el) return false;
+          const norm = el => (el?.innerText || el?.value || el?.textContent || '')
+            .replace(/\\s+/g, ' ').trim().toLowerCase();
+          const candidates = [...document.querySelectorAll(
+            'button, input, a, [role="button"], [onclick], [class*="submit" i], div, span'
+          )].filter(el => norm(el) === 'submit now');
+          const clickable = candidates.find(el => {
             const s = getComputedStyle(el);
             const r = el.getBoundingClientRect();
             return s.display !== 'none' && s.visibility !== 'hidden' &&
-              s.opacity !== '0' && r.width > 0 && r.height > 0;
-          };
-          const candidates = [...document.querySelectorAll('button, input, a, [role="button"], [onclick], div, span')]
-            .filter(el => visible(el) &&
-              (el.innerText || el.value || '').trim().toLowerCase() === 'submit now');
-          const el = candidates.find(x => {
-            const p = x.parentElement;
-            return !p || !visible(p) || (p.innerText || '').trim().toLowerCase() !== 'submit now';
+              r.width > 0 && r.height > 0;
           }) || candidates[0];
-          if (!el) return { clicked: false, count: candidates.length };
-          el.click();
+          if (!clickable) {
+            return {
+              clicked: false,
+              count: candidates.length,
+              bodyHasText: /submit\\s+now/i.test(document.body.innerText || '')
+            };
+          }
+          clickable.click();
           return {
             clicked: true,
-            tag: el.tagName,
-            id: el.id || '',
-            className: String(el.className || ''),
+            tag: clickable.tagName,
+            id: clickable.id || '',
+            className: String(clickable.className || ''),
             count: candidates.length
           };
         });
