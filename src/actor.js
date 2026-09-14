@@ -37,6 +37,11 @@ async function saveSeen() {
 
 const crawler = new PuppeteerCrawler({
   requestQueue: queue,
+  launchContext: {
+    launchOptions: {
+      executablePath: process.env.APIFY_CHROME_EXECUTABLE_PATH || '/usr/bin/google-chrome',
+    },
+  },
   maxConcurrency: Number(INPUT.maxConcurrency ?? 1),
   maxRequestsPerCrawl: Number(INPUT.maxRequests ?? 3000),
   navigationTimeoutSecs: 60,
