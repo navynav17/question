@@ -130,6 +130,9 @@ const crawler = new PlaywrightCrawler({
         const buttonTexts = await page.locator('button, input[type="submit"], input[type="button"]').allTextContents();
         log.info('Submit candidates: ' + JSON.stringify(buttonTexts.map(x => x.trim()).filter(Boolean)));
 
+        // The site may render "Submit Now" as a non-button element.
+        // Prefer the actual visible text control before falling back to ARIA role lookup.
+        const nativeSubmitNow = page.locator('text=/^\\s*Submit Now\\s*$/i');
         const submitNow = page.getByRole('button', { name: /^submit now$/i });
         const submitTest = page.getByRole('button', { name: /^submit test$/i });
 
@@ -149,7 +152,18 @@ const crawler = new PlaywrightCrawler({
 
         // Submit Now is the real visible control; Submit Test is normally
         // a confirmation action that may exist hidden in the DOM.
-        if (await clickVisible(submitNow)) {
+        let clickedSubmitNow = false;
+        const nativeSubmitNowCount = await nativeSubmitNow.count();
+        for (let i = 0; i < nativeSubmitNowCount; i++) {
+          const candidate = nativeSubmitNow.nth(i);
+          if (await candidate.isVisible().catch(() => false)) {
+            await candidate.click({ timeout: 10000 }).catch(() => {});
+            clickedSubmitNow = true;
+            break;
+          }
+        }
+
+        if (clickedSubmitNow || await clickVisible(submitNow)) {
           submitResult = { clicked: true, text: 'Submit Now', confirmation: true };
         } else if (await clickVisible(submitTest)) {
           submitResult = { clicked: true, text: 'Submit Test', confirmation: false };
