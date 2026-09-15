@@ -323,7 +323,7 @@ while (!cycles || cycleNumber < cycles) {
   console.log('MCQ CYCLE START: ' + JSON.stringify({ cycle: cycleNumber, totalCycles: cycles || 'unlimited', slugs: FIXED_MCQ_SLUGS.length }));
 
   const runId = Actor.getEnv()?.actorRunId || Date.now().toString();
-  const queue = await RequestQueue.open(`mcq-crawl-${runId}`);
+  const queue = await RequestQueue.open(`mcq-crawl-${runId}-cycle-${cycleNumber}`);
   // Only the fixed 172 MCQ slugs above are inserted into the SAME RequestQueue
   // that PuppeteerCrawler consumes. No newly discovered MCQ URL is added.
   let queuedMcqSlugs = 0;
