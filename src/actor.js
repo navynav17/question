@@ -74,7 +74,9 @@ async function discoverMcqSlugs(log) {
   const visited = new Set();
   const pending = [...startUrls];
 
-  while (pending.length && visited.size < Number(INPUT.maxDiscoveryPages ?? 500)) {
+  const maxDiscoveryPages = Number(INPUT.maxDiscoveryPages ?? 0); // 0 = unlimited
+
+  while (pending.length && (!maxDiscoveryPages || visited.size < maxDiscoveryPages)) {
     const url = pending.shift();
     if (!url || visited.has(url)) continue;
     visited.add(url);
@@ -90,7 +92,7 @@ async function discoverMcqSlugs(log) {
           if (mcq) discoveredMcq.set(mcq, true);
           else if (new URL(found).origin === 'https://pandeyramu.com.np' &&
                    !/\.(?:jpg|jpeg|png|gif|webp|svg|css|js|pdf|zip)$/i.test(new URL(found).pathname)) {
-            if (visited.size + pending.length < Number(INPUT.maxDiscoveryPages ?? 500)) pending.push(found);
+            if (!maxDiscoveryPages || visited.size + pending.length < maxDiscoveryPages) pending.push(found);
           }
         }
       } else {
@@ -104,7 +106,7 @@ async function discoverMcqSlugs(log) {
             if (u.pathname.includes('/wp-admin/') || u.pathname.includes('/feed/')) continue;
             if (/\.(?:jpg|jpeg|png|gif|webp|svg|css|js|xml|pdf|zip)$/i.test(u.pathname)) continue;
             const normalized = u.origin + u.pathname.replace(/\/$/, '') + (u.search || '');
-            if (!visited.has(normalized) && pending.length < Number(INPUT.maxDiscoveryPages ?? 500)) {
+            if (!visited.has(normalized) && (!maxDiscoveryPages || visited.size + pending.length < maxDiscoveryPages)) {
               pending.push(normalized);
             }
           } catch {}
@@ -121,8 +123,10 @@ async function discoverMcqSlugs(log) {
   await kv.setValue('MCQ_SLUGS', slugs);
   log.info('MCQ SLUG DISCOVERY COMPLETE: ' + JSON.stringify({
     pagesVisited: visited.size,
-    mcqSlugs: slugs.length
+    mcqSlugs: slugs.length,
+    discoveryLimit: maxDiscoveryPages || 'unlimited'
   }));
+  log.info('ALL DISCOVERED MCQ SLUGS: ' + JSON.stringify(slugs));
   return slugs;
 }
 
