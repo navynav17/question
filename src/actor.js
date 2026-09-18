@@ -73,81 +73,13 @@ while (!cycles || cycleNumber < cycles) {
     maxRequestRetries: 3,
   
     async requestHandler({ page, request, log }) {
-      if (request.userData?.type !== 'mcq') {
-        if (/sitemap[^/]*\.xml$/i.test(request.url)) {
-          const urls = await page.evaluate(() => {
-            const text = document.documentElement?.textContent || '';
-            return [...text.matchAll(/<loc>\s*(https?:\/\/[^<]+)\s*<\/loc>/gi)]
-              .map(m => m[1].trim());
-          }).catch(() => []);
-  
-          for (const url of urls) {
-            try {
-              const u = new URL(url);
-              if (u.origin !== 'https://pandeyramu.com.np') continue;
-              if (/^\/mcq\/[^/]+\/?$/i.test(u.pathname)) {
-                await queue.addRequest({
-                  url: u.href,
-                  uniqueKey: 'mcq:' + u.origin + u.pathname.replace(/\/$/, ''),
-                  userData: { type: 'mcq' }
-                });
-              } else {
-                await queue.addRequest({
-                  url: u.href,
-                  uniqueKey: 'discover:' + u.href.replace(/\/$/, ''),
-                  userData: { type: 'discover' }
-                });
-              }
-            } catch {}
-          }
-  
-          log.info('Sitemap discovery: ' + JSON.stringify({ urlsFound: urls.length }));
-          return;
-        }
-  
-        // Discovery cycle: traverse all internal HTML pages and continuously harvest
-        // every /mcq/<slug>/ URL. The request queue de-duplicates URLs.
-        const links = await page.$eval('a[href]', els => els.map(a => a.href).filter(Boolean));
-  
-        let mcqDiscovered = 0;
-        let internalDiscovered = 0;
-  
-        for (const href of links) {
-          try {
-            const u = new URL(href);
-            if (u.origin !== 'https://pandeyramu.com.np') continue;
-            if (u.pathname.includes('/wp-admin/') || u.pathname.includes('/feed/')) continue;
-            if (/\.(?:jpg|jpeg|png|gif|webp|svg|css|js|xml|pdf|zip)$/i.test(u.pathname)) continue;
-  
-            const normalized = u.origin + u.pathname.replace(/\/$/, '') + (u.search || '');
-  
-            if (/^\/mcq\/[^/]+\/?$/i.test(u.pathname)) {
-              await queue.addRequest({
-                url: normalized,
-                uniqueKey: 'mcq:' + u.origin + u.pathname.replace(/\/$/, ''),
-                userData: { type: 'mcq' }
-              });
-              mcqDiscovered++;
-            } else {
-              await queue.addRequest({
-                url: normalized,
-                uniqueKey: 'discover:' + normalized,
-                userData: { type: 'discover' }
-              });
-              internalDiscovered++;
-            }
-          } catch {}
-        }
-  
-        log.info('MCQ discovery: ' + JSON.stringify({
-          page: request.url,
-          linksFound: links.length,
-          mcqDiscovered,
-          internalDiscovered
-        }));
+      if (request.url !== sourceUrl) {
+        log.warning('Blocked non-target URL: ' + request.url);
         return;
       }
-  
+
+      await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      
       const username = String(INPUT.username ?? '').trim() || 'Abcd';
       const contact = String(INPUT.contact ?? '').trim() || '1234';
   
