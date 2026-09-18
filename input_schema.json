@@ -1,5 +1,5 @@
 {
-  "title": "Ramu Pandey MCQ extractor",
+  "title": "ExamSahayogi NIMABI Basic MCQ extractor",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
@@ -9,7 +9,9 @@
       "description": "Use https://pandeyramu.com.np/mcq/ or any MCQ index page.",
       "editor": "requestListSources",
       "default": [
-        { "url": "https://pandeyramu.com.np/mcq/" }
+        {
+          "url": "https://www.examsahayogi.com/quiz/nimabi-basic"
+        }
       ],
       "items": {
         "type": "object",
@@ -20,7 +22,9 @@
             "editor": "textfield"
           }
         },
-        "required": ["url"]
+        "required": [
+          "url"
+        ]
       }
     },
     "maxConcurrency": {
@@ -36,7 +40,21 @@
       "default": 2000,
       "minimum": 10,
       "maximum": 5000
+    },
+    "username": {
+      "title": "Name",
+      "type": "string",
+      "default": "Abcd",
+      "editor": "textfield"
+    },
+    "contact": {
+      "title": "Contact",
+      "type": "string",
+      "default": "1234",
+      "editor": "textfield"
     }
   },
-  "required": ["startUrls"]
+  "required": [
+    "startUrls"
+  ]
 }
