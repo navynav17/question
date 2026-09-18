@@ -5,16 +5,13 @@ import { PuppeteerCrawler, RequestQueue, Dataset } from 'crawlee';
 await Actor.init();
 
 const INPUT = await Actor.getInput() ?? {};
-const configuredUrls = (INPUT.startUrls ?? [])
-  .map(x => typeof x === 'string' ? x : x?.url)
-  .filter(Boolean);
 
 const DEFAULT_START_URL = 'https://www.examsahayogi.com/quiz/nimabi-basic';
 const configuredUrls = (INPUT.startUrls ?? [])
   .map(x => typeof x === 'string' ? x : x?.url)
   .filter(Boolean);
 
-const startUrls = [...new Set(configuredUrls.length ? configuredUrls : [DEFAULT_START_URL])];
+const startUrls = [DEFAULT_START_URL];
 
 const dataset = await Dataset.open();
 const kv = await Actor.openKeyValueStore();
