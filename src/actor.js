@@ -1,434 +1,163 @@
-import crypto from 'node:crypto';
-import { Actor } from 'apify';
-import { PuppeteerCrawler, RequestQueue, Dataset } from 'crawlee';
+import { Actor, Dataset } from 'apify';
 
 await Actor.init();
 
 const INPUT = await Actor.getInput() ?? {};
-
-const DEFAULT_START_URL = 'https://www.examsahayogi.com/quiz/nimabi-basic';
-const configuredUrls = (INPUT.startUrls ?? [])
-  .map(x => typeof x === 'string' ? x : x?.url)
-  .filter(Boolean);
-
-const startUrls = [DEFAULT_START_URL];
+const API_BASE = 'https://exam-sahayogi.onrender.com/api/v1';
+const CATALOG_URL = API_BASE + '/exams/frontend-data';
+const OUTPUT_KEY = 'ALL_EXAMSAHAYOGI_MCQS';
 
 const dataset = await Dataset.open();
 const kv = await Actor.openKeyValueStore();
-const seen = (await kv.getValue('SEEN_QUESTIONS')) ?? {};
-const runOutput = { quizCount: 0, newQuestionCount: 0, quizzes: [] };
-const clean = value => (value || '').replace(/\s+/g, ' ').trim();
 
-function dedupeKey(question) {
-  return crypto.createHash('sha256')
-    .update(String(question || '').replace(/\s+/g, ' ').trim().toLowerCase())
-    .digest('hex');
+function clean(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
-async function saveState() {
-  await kv.setValue('SEEN_QUESTIONS', seen);
+function normalizeQuestion(q, meta) {
+  return {
+    categoryId: meta.categoryId ?? null,
+    category: meta.category ?? '',
+    subcategoryId: meta.subcategoryId ?? null,
+    subcategory: meta.subcategory ?? '',
+    quizId: meta.quizId ?? null,
+    quizTitle: meta.quizTitle ?? '',
+    partId: q.partId ?? meta.partId ?? null,
+    partTitle: q.partTitle ?? meta.partTitle ?? '',
+    questionId: q.id ?? null,
+    question: clean(q.question),
+    options: Array.isArray(q.options) ? q.options : [],
+    answer: clean(q.answer),
+  };
 }
 
-// This actor is intentionally restricted to ONE source URL.
-// It does not discover or crawl any other website/page.
-const sourceUrl = 'https://www.examsahayogi.com/quiz/nimabi-basic';
-const discoveredSlugs = [sourceUrl];
-await kv.setValue('MCQ_SLUGS', discoveredSlugs);
-
-const cycles = Number(INPUT.cycles ?? 0); // 0 = repeat forever
-let cycleNumber = 0;
-
-while (!cycles || cycleNumber < cycles) {
-  cycleNumber++;
-  console.log('MCQ CYCLE START: ' + JSON.stringify({ cycle: cycleNumber, totalCycles: cycles || 'unlimited', source: sourceUrl }));
-
-  const runId = Actor.getEnv()?.actorRunId || Date.now().toString();
-  const queue = await RequestQueue.open(`mcq-crawl-${runId}-cycle-${cycleNumber}`);
-
-  const result = await queue.addRequest({
-    url: sourceUrl,
-    uniqueKey: 'examsahayogi:nimabi-basic',
-    userData: { type: 'mcq', slug: 'nimabi-basic' }
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: { 'user-agent': 'Mozilla/5.0' }
   });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(url + ' -> HTTP ' + response.status + ': ' + text.slice(0, 500));
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(url + ' returned non-JSON');
+  }
+}
 
-  console.log('EXAMSahayogi URL QUEUED: ' + JSON.stringify({
-    url: sourceUrl,
-    newlyQueued: !(result.wasAlreadyPresent || result.wasAlreadyHandled)
-  }));
+const catalog = await fetchJson(CATALOG_URL);
+if (!Array.isArray(catalog)) throw new Error('Unexpected catalog response');
 
-  const crawler = new PuppeteerCrawler({
-    requestQueue: queue,
-    launchContext: {
-      launchOptions: {
-        executablePath: process.env.APIFY_CHROME_EXECUTABLE_PATH || '/usr/bin/google-chrome'
-      }
-    },
-    maxConcurrency: Number(INPUT.maxConcurrency ?? 1),
-    maxRequestsPerCrawl: Number(INPUT.maxRequests ?? 10000),
-    navigationTimeoutSecs: 60,
-    requestHandlerTimeoutSecs: 180,
-    maxRequestRetries: 3,
-  
-    async requestHandler({ page, request, log }) {
-      if (request.url !== sourceUrl) {
-        log.warning('Blocked non-target URL: ' + request.url);
-        return;
-      }
+const all = [];
+const stats = {
+  categories: 0,
+  subcategories: 0,
+  quizzes: 0,
+  parts: 0,
+  questions: 0,
+  uniqueQuestions: 0,
+  apiQuestions: 0,
+};
 
-      await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+const questionKeys = new Set();
 
-      // ExamSahayogi is a client-rendered React app. Wait until something
-      // meaningful has rendered before trying to fill/start the test.
-      await page.waitForFunction(() => {
-        const visible = el => {
-          if (!el) return false;
-          const s = getComputedStyle(el);
-          const r = el.getBoundingClientRect();
-          return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-        };
-        const hasInput = [...document.querySelectorAll('input')].some(visible);
-        const hasStart = [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
-          .some(el => visible(el) && /start|begin|test/i.test((el.innerText || el.value || '').trim()));
-        const hasQuestions = document.querySelectorAll('.question-block').length > 0;
-        const bodyText = (document.body?.innerText || '').trim();
-        return hasQuestions || hasInput || hasStart || bodyText.length > 100;
-      }, { timeout: 60000 });
+for (const category of catalog) {
+  stats.categories++;
 
-      const username = String(INPUT.username ?? '').trim() || 'Abcd';
-      const contact = String(INPUT.contact ?? '').trim() || '1234';
-  
-      const started = await page.evaluate(({ username, contact }) => {
-        const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-        const visible = el => {
-          if (!el) return false;
-          const s = getComputedStyle(el);
-          const r = el.getBoundingClientRect();
-          return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-        };
-  
-        const text = clean(document.body.innerText);
-        const inputs = [...document.querySelectorAll('input')].filter(visible);
-        const fields = inputs.map(input => ({
-          input,
-          meta: [input.name, input.id, input.placeholder, input.getAttribute('aria-label') || '', input.type || ''].join(' ').toLowerCase()
-        }));
-        const nameInput = fields.find(({ meta }) =>
-          /name|full.?name|candidate/.test(meta)
-        )?.input || inputs.find(input => /text/i.test(input.type || 'text'));
-        const contactInput = fields.find(({ input, meta }) =>
-          input !== nameInput && /contact|phone|mobile|tel|number/.test(meta)
-        )?.input || inputs.find(input => input !== nameInput && /tel|number/i.test(input.type || ''));
-  
-        const startButton = [...document.querySelectorAll(
-          'button, input[type="submit"], input[type="button"]'
-        )].find(el => visible(el) && /start\s+mcq\s+test/i.test(clean(el.innerText || el.value)));
-  
-        if (!/enter your name to begin the test/i.test(text) && !startButton) {
-          return { startScreen: false, filled: false, clicked: false };
-        }
-  
-        const setInputValue = (input, value) => {
-          if (!input) return false;
-          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-          if (setter) setter.call(input, value);
-          else input.value = value;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-          input.dispatchEvent(new Event('blur', { bubbles: true }));
-          return true;
-        };
-        const filledName = setInputValue(nameInput, username);
-        const filledContact = setInputValue(contactInput, contact);
-  
-        if (startButton) {
-          startButton.click();
-          return { startScreen: true, filled: filledName || filledContact, filledName, filledContact, clicked: true, username, contact };
-        }
-  
-        const form = nameInput?.closest('form');
-        if (form) {
-          form.requestSubmit ? form.requestSubmit() : form.submit();
-          return { startScreen: true, filled: filledName || filledContact, filledName, filledContact, clicked: true, username, contact };
-        }
-  
-        return { startScreen: true, filled: filledName || filledContact, filledName, filledContact, clicked: false, username, contact };
-      }, { username, contact });
-  
-      if (started.startScreen) {
-        log.info('MCQ start screen: ' + JSON.stringify(started));
-        if (!started.clicked) throw new Error('Could not start MCQ test.');
-      }
+  for (const subcategory of category.subcategories || []) {
+    stats.subcategories++;
 
-      // The quiz itself is also rendered/fetched asynchronously after Start.
-      const questionReady = await page.waitForFunction(
-        () => document.querySelectorAll('.question-block').length > 0,
-        { timeout: 90000 }
-      ).then(() => true).catch(() => false);
+    for (const quiz of subcategory.quizzes || []) {
+      stats.quizzes++;
 
-      if (!questionReady) {
-        const state = await page.evaluate(() => ({
-          url: location.href,
-          title: document.title,
-          bodyText: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 1500),
-          inputs: [...document.querySelectorAll('input')].map(i => ({ type: i.type, name: i.name, id: i.id, placeholder: i.placeholder })).slice(0, 20),
-          buttons: [...document.querySelectorAll('button')].map(b => (b.innerText || '').trim()).filter(Boolean).slice(0, 20),
-          questionBlocks: document.querySelectorAll('.question-block').length
-        }));
-        log.error('ExamSahayogi quiz did not render: ' + JSON.stringify(state));
-        throw new Error('ExamSahayogi quiz UI did not render within 90 seconds.');
-      }
-  
-      const preSubmitQuestions = await page.evaluate(() => {
-        const clean = value => (value || '').replace(/\s+/g, ' ').trim();
-  
-        return [...document.querySelectorAll('.question-block')].map((block, index) => {
-          const questionEl =
-            block.querySelector('.question-text') ||
-            block.querySelector('.question') ||
-            block.querySelector('[class*="question-text"]') ||
-            block.querySelector('h1, h2, h3, h4, p');
-  
-          const nodes = [
-            ...block.querySelectorAll(
-              'label, .option, .answer-option, [class*="option"], [class*="choice"]'
-            )
+      for (const part of quiz.parts || []) {
+        stats.parts++;
+
+        let questions = Array.isArray(part.questions) ? part.questions : [];
+
+        // frontend-data can return empty question arrays for database-backed parts.
+        // Fetch the part endpoint when that happens.
+        if (questions.length === 0 && part.id) {
+          const candidates = [
+            API_BASE + '/user/quiz/' + quiz.id + '/' + part.id,
+            API_BASE + '/v1/quizzes/' + quiz.id + '/' + part.id,
+            API_BASE + '/v1/questions/' + part.id,
+            API_BASE + '/questions/' + part.id,
           ];
-  
-          const options = [];
-          const seenOptions = new Set();
-  
-          for (const node of nodes) {
-            const input = node.querySelector?.('input[type="radio"], input[type="checkbox"]');
-            const text = clean(
-              node.querySelector?.('.option-text')?.innerText ||
-              node.querySelector?.('.option-text')?.textContent ||
-              node.innerText ||
-              node.textContent ||
-              input?.value ||
-              ''
-            );
-  
-            if (!text || seenOptions.has(text)) continue;
-            seenOptions.add(text);
-            options.push({ number: options.length + 1, text });
-          }
-  
-          return {
-            number: index + 1,
-            question: clean(questionEl?.innerText || questionEl?.textContent || ''),
-            options
-          };
-        });
-      });
-  
-      log.info('MCQ questions/options captured: ' + JSON.stringify({
-        questionCount: preSubmitQuestions.length,
-        optionCounts: preSubmitQuestions.map(q => q.options.length)
-      }));
-  
-      // Select one answer per question so the site's review/result state is generated.
-      await page.evaluate(() => {
-        for (const block of document.querySelectorAll('.question-block')) {
-          const input = block.querySelector('input[type="radio"]:checked') ||
-            block.querySelector('input[type="radio"]');
-          if (!input) continue;
-          if (!input.checked) {
-            const label = input.closest('label');
-            if (label) label.click();
-            else input.click();
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-          }
-        }
-      });
-  
-      let dialogAccepted = false;
-      const dialogHandler = async dialog => {
-        if (/submit this quiz now/i.test(dialog.message())) {
-          dialogAccepted = true;
-          log.info('Submit confirmation dialog: ' + JSON.stringify({
-            type: dialog.type(),
-            message: dialog.message()
-          }));
-          await dialog.accept();
-        } else {
-          await dialog.dismiss();
-        }
-      };
-      page.on('dialog', dialogHandler);
-  
-      // IMPORTANT: only click the page-level Submit Now. Its own JS listener
-      // calls window.confirm() and then quizForm.requestSubmit().
-      const clicked = await page.evaluate(() => {
-        const el = document.querySelector('#submit-now-btn');
-        if (!el || el.disabled) return false;
-        el.click();
-        return true;
-      });
-  
-      log.info('Submit Now click: ' + JSON.stringify({ clicked }));
-  
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      page.off('dialog', dialogHandler);
-  
-      if (!clicked || !dialogAccepted) {
-        throw new Error('Submit Now was not completed.');
-      }
-  
-      const resultReady = await page.waitForFunction(
-        () => {
-          const blocks = document.querySelectorAll('.question-block');
-          return blocks.length > 0 &&
-            (document.querySelectorAll('.question-block label.correct').length > 0 ||
-             document.querySelectorAll('.question-block .solution-text').length > 0 ||
-             document.querySelectorAll('.question-block .solution').length > 0);
-        },
-        { timeout: 90000 }
-      ).then(() => true).catch(() => false);
-  
-      const resultStats = await page.evaluate(() => ({
-        correct: document.querySelectorAll('.question-block label.correct').length,
-        solutions: document.querySelectorAll('.question-block .solution-text, .question-block .solution').length
-      }));
-      log.info('MCQ result DOM ready: ' + JSON.stringify({
-        resultReady,
-        ...resultStats
-      }));
-  
-      const postSubmit = await page.evaluate(() => {
-        const clean = value => (value || '').replace(/\s+/g, ' ').trim();
-        const blocks = [...document.querySelectorAll('.question-block')];
-  
-        return blocks.map((block, index) => {
-          const correctEl =
-            block.querySelector('label.correct') ||
-            block.querySelector('.correct-answer') ||
-            block.querySelector('[data-correct="true"]') ||
-            block.querySelector('.correct');
-  
-          const solutionEl =
-            block.querySelector('.solution-text') ||
-            block.querySelector('.solution') ||
-            block.querySelector('[class*="solution"]');
-  
-          let correctAnswer = clean(correctEl?.innerText || correctEl?.textContent || '');
-  
-          if (!correctAnswer) {
-            const body = clean(block.innerText || block.textContent || '');
-            const match = body.match(/(?:correct\s+answer|answer)\s*[:\-]\s*([^\n]+)/i);
-            if (match) correctAnswer = clean(match[1]);
-          }
-  
-          return {
-            number: index + 1,
-            correctAnswer,
-            solution: clean(solutionEl?.innerText || solutionEl?.textContent || '')
-          };
-        });
-      });
-  
-      const title = await page.$eval('h1', el => (el.innerText || el.textContent || '').trim())
-        .catch(() => '');
-  
-      const chapter = (title || '').replace(/\s+/g, ' ').trim().replace(/\s+MCQ\s*$/i, '').trim() ||
-        new URL(request.url).pathname.split('/').filter(Boolean).pop()
-          ?.replace(/[-_]+/g, ' ')
-          .replace(/\b\w/g, c => c.toUpperCase()) || '';
-  
-      const questions = preSubmitQuestions.map((before, index) => {
-        const after = postSubmit[index] || {};
-        const normalizedCorrect = clean(after.correctAnswer).toLowerCase();
-  
-        const options = before.options.map(option => {
-          const normalizedOption = option.text.toLowerCase();
-          const letter = String.fromCharCode(65 + option.number - 1).toLowerCase();
-  
-          const isCorrect =
-            normalizedCorrect === normalizedOption ||
-            normalizedCorrect.startsWith(letter + '.') ||
-            normalizedCorrect.startsWith(letter + ')') ||
-            normalizedCorrect.startsWith(letter + ' ');
-  
-          return { ...option, isCorrect };
-        });
-  
-        return {
-          number: before.number,
-          question: before.question,
-          options,
-          correctAnswer: after.correctAnswer || '',
-          solution: after.solution || ''
-        };
-      });
-  
-      const quiz = {
-        quizUrl: page.url(),
-        chapter,
-        questionCount: questions.length,
-        questions
-      };
-  
-      // Persist only genuinely new questions. This survives actor restarts/runs.
-      const newQuestions = [];
-  
-      for (const question of questions) {
-        const key = dedupeKey(question.question);
-        if (seen[key]) continue;
-  
-        seen[key] = {
-          firstSeenQuizUrl: quiz.quizUrl,
-          firstSeenAt: new Date().toISOString()
-        };
-  
-        newQuestions.push(question);
-  
-      }
-  
-      // One JSON dataset record per quiz: metadata + every NEW question with
-      // its full option list, correct answer and solution. Duplicate questions
-      // are excluded using the persistent SEEN_QUESTIONS store.
-      if (newQuestions.length > 0) {
-        await dataset.pushData({
-          quizUrl: quiz.quizUrl,
-          chapter: quiz.chapter,
-          questionCount: quiz.questionCount,
-          newQuestionCount: newQuestions.length,
-          questions: newQuestions
-        });
-      }
-  
-      runOutput.quizCount += 1;
-      runOutput.newQuestionCount += newQuestions.length;
-      runOutput.quizzes.push({
-        quizUrl: quiz.quizUrl,
-        chapter: quiz.chapter,
-        questionCount: quiz.questionCount,
-        newQuestionCount: newQuestions.length,
-        questions: newQuestions
-      });
-  
-      await saveState();
-  
-      log.info('MCQ JSON saved: ' + JSON.stringify({
-        quizUrl: quiz.quizUrl,
-        chapter: quiz.chapter,
-        questionCount: quiz.questionCount,
-        newQuestionCount: newQuestions.length
-      }));
-    },
-  
-    async failedRequestHandler({ request, log }) {
-      log.error('Request permanently failed: ' + request.url);
-    }
-  });
-  
-  await crawler.run();
-  await saveState();
-  await dataset.pushData({ type: 'run_summary', quizCount: runOutput.quizCount, newQuestionCount: runOutput.newQuestionCount });
-  
 
-  console.log('MCQ CYCLE COMPLETE: ' + JSON.stringify({ cycle: cycleNumber }));
+          for (const url of candidates) {
+            try {
+              const data = await fetchJson(url);
+              if (Array.isArray(data)) {
+                questions = data;
+                stats.apiQuestions += questions.length;
+                break;
+              }
+              if (Array.isArray(data?.questions)) {
+                questions = data.questions;
+                stats.apiQuestions += questions.length;
+                break;
+              }
+              if (Array.isArray(data?.data)) {
+                questions = data.data;
+                stats.apiQuestions += questions.length;
+                break;
+              }
+            } catch {
+              // Try the next known route.
+            }
+          }
+        }
+
+        for (const q of questions) {
+          if (!q || typeof q !== 'object') continue;
+
+          const row = normalizeQuestion(q, {
+            categoryId: category.id,
+            category: category.name,
+            subcategoryId: subcategory.id,
+            subcategory: subcategory.name,
+            quizId: quiz.id,
+            quizTitle: quiz.title,
+            partId: part.id,
+            partTitle: part.title,
+          });
+
+          if (!row.question) continue;
+
+          stats.questions++;
+
+          const key = row.question.toLowerCase();
+          if (questionKeys.has(key)) continue;
+          questionKeys.add(key);
+
+          all.push(row);
+        }
+      }
+    }
+  }
 }
 
-await saveState();
+stats.uniqueQuestions = all.length;
+
+await kv.setValue(OUTPUT_KEY, {
+  source: CATALOG_URL,
+  extractedAt: new Date().toISOString(),
+  stats,
+  questions: all,
+});
+
+await dataset.pushData({
+  type: 'extraction_summary',
+  source: CATALOG_URL,
+  stats,
+});
+
+for (const row of all) {
+  await dataset.pushData(row);
+}
+
+console.log('ExamSahayogi extraction complete:', JSON.stringify(stats));
+console.log('KV OUTPUT:', OUTPUT_KEY);
 await Actor.exit();
