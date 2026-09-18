@@ -452,12 +452,16 @@ while (!cycles || cycleNumber < cycles) {
   
         const text = clean(document.body.innerText);
         const inputs = [...document.querySelectorAll('input')].filter(visible);
-        const nameInput = inputs.find(input =>
-          /name|full.?name|candidate/i.test([input.name, input.id, input.placeholder, input.getAttribute('aria-label') || ''].join(' '))
-        ) || inputs.find(input => /text/i.test(input.type || 'text'));
-        const contactInput = inputs.find(input =>
-          input !== nameInput && /contact|phone|mobile|tel/i.test([input.name, input.id, input.placeholder, input.getAttribute('aria-label') || ''].join(' '))
-        ) || inputs.find(input => input !== nameInput && /tel|number/i.test(input.type || ''));
+        const fields = inputs.map(input => ({
+          input,
+          meta: [input.name, input.id, input.placeholder, input.getAttribute('aria-label') || '', input.type || ''].join(' ').toLowerCase()
+        }));
+        const nameInput = fields.find(({ meta }) =>
+          /name|full.?name|candidate/.test(meta)
+        )?.input || inputs.find(input => /text/i.test(input.type || 'text'));
+        const contactInput = fields.find(({ input, meta }) =>
+          input !== nameInput && /contact|phone|mobile|tel|number/.test(meta)
+        )?.input || inputs.find(input => input !== nameInput && /tel|number/i.test(input.type || ''));
   
         const startButton = [...document.querySelectorAll(
           'button, input[type="submit"], input[type="button"]'
