@@ -9,11 +9,12 @@ const configuredUrls = (INPUT.startUrls ?? [])
   .map(x => typeof x === 'string' ? x : x?.url)
   .filter(Boolean);
 
-const startUrls = [...new Set(configuredUrls.length ? configuredUrls : [
-  'https://pandeyramu.com.np/',
-  'https://pandeyramu.com.np/all-subjects/',
-  'https://pandeyramu.com.np/sitemap.xml'
-])];
+const DEFAULT_START_URL = 'https://www.examsahayogi.com/quiz/nimabi-basic';
+const configuredUrls = (INPUT.startUrls ?? [])
+  .map(x => typeof x === 'string' ? x : x?.url)
+  .filter(Boolean);
+
+const startUrls = [...new Set(configuredUrls.length ? configuredUrls : [DEFAULT_START_URL])];
 
 const discoveredMcq = new Map();
 const dataset = await Dataset.open();
