@@ -76,7 +76,24 @@ while (!cycles || cycleNumber < cycles) {
       }
 
       await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-      
+
+      // ExamSahayogi is a client-rendered React app. Wait until something
+      // meaningful has rendered before trying to fill/start the test.
+      await page.waitForFunction(() => {
+        const visible = el => {
+          if (!el) return false;
+          const s = getComputedStyle(el);
+          const r = el.getBoundingClientRect();
+          return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+        };
+        const hasInput = [...document.querySelectorAll('input')].some(visible);
+        const hasStart = [...document.querySelectorAll('button, input[type="submit"], input[type="button"]')]
+          .some(el => visible(el) && /start|begin|test/i.test((el.innerText || el.value || '').trim()));
+        const hasQuestions = document.querySelectorAll('.question-block').length > 0;
+        const bodyText = (document.body?.innerText || '').trim();
+        return hasQuestions || hasInput || hasStart || bodyText.length > 100;
+      }, { timeout: 60000 });
+
       const username = String(INPUT.username ?? '').trim() || 'Abcd';
       const contact = String(INPUT.contact ?? '').trim() || '1234';
   
@@ -140,13 +157,26 @@ while (!cycles || cycleNumber < cycles) {
       if (started.startScreen) {
         log.info('MCQ start screen: ' + JSON.stringify(started));
         if (!started.clicked) throw new Error('Could not start MCQ test.');
-        await new Promise(resolve => setTimeout(resolve, 4500));
       }
-  
-      await page.waitForFunction(
+
+      // The quiz itself is also rendered/fetched asynchronously after Start.
+      const questionReady = await page.waitForFunction(
         () => document.querySelectorAll('.question-block').length > 0,
-        { timeout: 30000 }
-      );
+        { timeout: 90000 }
+      ).then(() => true).catch(() => false);
+
+      if (!questionReady) {
+        const state = await page.evaluate(() => ({
+          url: location.href,
+          title: document.title,
+          bodyText: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 1500),
+          inputs: [...document.querySelectorAll('input')].map(i => ({ type: i.type, name: i.name, id: i.id, placeholder: i.placeholder })).slice(0, 20),
+          buttons: [...document.querySelectorAll('button')].map(b => (b.innerText || '').trim()).filter(Boolean).slice(0, 20),
+          questionBlocks: document.querySelectorAll('.question-block').length
+        }));
+        log.error('ExamSahayogi quiz did not render: ' + JSON.stringify(state));
+        throw new Error('ExamSahayogi quiz UI did not render within 90 seconds.');
+      }
   
       const preSubmitQuestions = await page.evaluate(() => {
         const clean = value => (value || '').replace(/\s+/g, ' ').trim();
