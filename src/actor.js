@@ -438,9 +438,10 @@ while (!cycles || cycleNumber < cycles) {
         return;
       }
   
-      const username = String(INPUT.username ?? '').trim() || 'Abcdefgh';
+      const username = String(INPUT.username ?? '').trim() || 'Abcd';
+      const contact = String(INPUT.contact ?? '').trim() || '1234';
   
-      const started = await page.evaluate((username) => {
+      const started = await page.evaluate(({ username, contact }) => {
         const clean = s => (s || '').replace(/\s+/g, ' ').trim();
         const visible = el => {
           if (!el) return false;
@@ -450,9 +451,13 @@ while (!cycles || cycleNumber < cycles) {
         };
   
         const text = clean(document.body.innerText);
-        const nameInput = [...document.querySelectorAll(
-          'input[type="text"], input:not([type]), input[name*="name" i], input[id*="name" i], input[placeholder*="name" i]'
-        )].find(visible);
+        const inputs = [...document.querySelectorAll('input')].filter(visible);
+        const nameInput = inputs.find(input =>
+          /name|full.?name|candidate/i.test([input.name, input.id, input.placeholder, input.getAttribute('aria-label') || ''].join(' '))
+        ) || inputs.find(input => /text/i.test(input.type || 'text'));
+        const contactInput = inputs.find(input =>
+          input !== nameInput && /contact|phone|mobile|tel/i.test([input.name, input.id, input.placeholder, input.getAttribute('aria-label') || ''].join(' '))
+        ) || inputs.find(input => input !== nameInput && /tel|number/i.test(input.type || ''));
   
         const startButton = [...document.querySelectorAll(
           'button, input[type="submit"], input[type="button"]'
@@ -462,28 +467,32 @@ while (!cycles || cycleNumber < cycles) {
           return { startScreen: false, filled: false, clicked: false };
         }
   
-        if (nameInput) {
+        const setInputValue = (input, value) => {
+          if (!input) return false;
           const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-          if (setter) setter.call(nameInput, username);
-          else nameInput.value = username;
-          nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-          nameInput.dispatchEvent(new Event('change', { bubbles: true }));
-          nameInput.dispatchEvent(new Event('blur', { bubbles: true }));
-        }
+          if (setter) setter.call(input, value);
+          else input.value = value;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          input.dispatchEvent(new Event('blur', { bubbles: true }));
+          return true;
+        };
+        const filledName = setInputValue(nameInput, username);
+        const filledContact = setInputValue(contactInput, contact);
   
         if (startButton) {
           startButton.click();
-          return { startScreen: true, filled: !!nameInput, clicked: true, username };
+          return { startScreen: true, filled: filledName || filledContact, filledName, filledContact, clicked: true, username, contact };
         }
   
         const form = nameInput?.closest('form');
         if (form) {
           form.requestSubmit ? form.requestSubmit() : form.submit();
-          return { startScreen: true, filled: true, clicked: true, username };
+          return { startScreen: true, filled: filledName || filledContact, filledName, filledContact, clicked: true, username, contact };
         }
   
-        return { startScreen: true, filled: !!nameInput, clicked: false, username };
-      }, username);
+        return { startScreen: true, filled: filledName || filledContact, filledName, filledContact, clicked: false, username, contact };
+      }, { username, contact });
   
       if (started.startScreen) {
         log.info('MCQ start screen: ' + JSON.stringify(started));
