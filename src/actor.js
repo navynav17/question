@@ -40,7 +40,7 @@ let cycleNumber = 0;
 
 while (!cycles || cycleNumber < cycles) {
   cycleNumber++;
-  console.log('MCQ CYCLE START: ' + JSON.stringify({ cycle: cycleNumber, totalCycles: cycles || 'unlimited', slugs: FIXED_MCQ_SLUGS.length }));
+  console.log('MCQ CYCLE START: ' + JSON.stringify({ cycle: cycleNumber, totalCycles: cycles || 'unlimited', source: sourceUrl }));
 
   const runId = Actor.getEnv()?.actorRunId || Date.now().toString();
   const queue = await RequestQueue.open(`mcq-crawl-${runId}-cycle-${cycleNumber}`);
